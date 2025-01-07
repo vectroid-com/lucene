@@ -323,7 +323,13 @@ public class HnswGraphSearcher extends AbstractHnswGraphSearcher {
       int friendOrd;
       int numNodes = 0;
       while ((friendOrd = graphNextNeighbor(graph)) != NO_MORE_DOCS) {
-        assert friendOrd < size : "friendOrd=" + friendOrd + "; size=" + size;
+        // VECTROID: this assertion is broken because nodes are concurrently added to the graph and
+        // its size grows, and we can obtain a neighbor that is beyond the size we have started
+        // with. Instead, grow the array again.
+//        assert friendOrd < size : "friendOrd=" + friendOrd + "; size=" + size;
+        if (friendOrd >= visited.length()) {
+          visited = FixedBitSet.ensureCapacity(((FixedBitSet) visited), friendOrd);
+        }
         if (visited.getAndSet(friendOrd)) {
           continue;
         }

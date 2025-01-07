@@ -53,7 +53,7 @@ public class TestSegmentInfos extends LuceneTestCase {
     SegmentInfos sis = new SegmentInfos(Version.LATEST.major);
     BaseDirectoryWrapper dir = newDirectory();
     dir.setCheckIndexOnClose(false);
-    sis.commit(dir);
+    sis.commit(dir, true);
     sis = SegmentInfos.readLatestCommit(dir);
     assertNull(sis.getMinSegmentLuceneVersion());
     assertEquals(Version.LATEST, sis.getCommitLuceneVersion());
@@ -83,12 +83,12 @@ public class TestSegmentInfos extends LuceneTestCase {
             Collections.<String, String>emptyMap(),
             null);
     info.setFiles(Collections.<String>emptySet());
-    codec.segmentInfoFormat().write(dir, info, IOContext.DEFAULT);
+//    codec.segmentInfoFormat().write(dir, info, IOContext.DEFAULT);
     SegmentCommitInfo commitInfo =
         new SegmentCommitInfo(info, 0, 0, -1, -1, -1, StringHelper.randomId());
 
     sis.add(commitInfo);
-    sis.commit(dir);
+    sis.commit(dir, true);
     sis = SegmentInfos.readLatestCommit(dir);
     assertEquals(Version.LUCENE_10_0_0, sis.getMinSegmentLuceneVersion());
     assertEquals(Version.LATEST, sis.getCommitLuceneVersion());
@@ -118,7 +118,7 @@ public class TestSegmentInfos extends LuceneTestCase {
             Collections.<String, String>emptyMap(),
             null);
     info.setFiles(Collections.<String>emptySet());
-    codec.segmentInfoFormat().write(dir, info, IOContext.DEFAULT);
+//    codec.segmentInfoFormat().write(dir, info, IOContext.DEFAULT);
     SegmentCommitInfo commitInfo =
         new SegmentCommitInfo(info, 0, 0, -1, -1, -1, StringHelper.randomId());
     sis.add(commitInfo);
@@ -138,11 +138,11 @@ public class TestSegmentInfos extends LuceneTestCase {
             Collections.<String, String>emptyMap(),
             null);
     info.setFiles(Collections.<String>emptySet());
-    codec.segmentInfoFormat().write(dir, info, IOContext.DEFAULT);
+//    codec.segmentInfoFormat().write(dir, info, IOContext.DEFAULT);
     commitInfo = new SegmentCommitInfo(info, 0, 0, -1, -1, -1, StringHelper.randomId());
     sis.add(commitInfo);
 
-    sis.commit(dir);
+    sis.commit(dir, true);
     byte[] commitInfoId0 = sis.info(0).getId();
     byte[] commitInfoId1 = sis.info(1).getId();
     sis = SegmentInfos.readLatestCommit(dir);
@@ -336,7 +336,7 @@ public class TestSegmentInfos extends LuceneTestCase {
             Collections.<String, String>emptyMap(),
             null);
     info.setFiles(Collections.<String>emptySet());
-    codec.segmentInfoFormat().write(dir, info, IOContext.DEFAULT);
+//    codec.segmentInfoFormat().write(dir, info, IOContext.DEFAULT);
     SegmentCommitInfo commitInfo =
         new SegmentCommitInfo(info, 0, 0, -1, -1, -1, StringHelper.randomId());
     sis.add(commitInfo);
@@ -356,11 +356,11 @@ public class TestSegmentInfos extends LuceneTestCase {
             Collections.<String, String>emptyMap(),
             null);
     info.setFiles(Collections.<String>emptySet());
-    codec.segmentInfoFormat().write(dir, info, IOContext.DEFAULT);
+//    codec.segmentInfoFormat().write(dir, info, IOContext.DEFAULT);
     commitInfo = new SegmentCommitInfo(info, 0, 0, -1, -1, -1, StringHelper.randomId());
     sis.add(commitInfo);
 
-    sis.commit(dir);
+    sis.commit(dir, true);
 
     BaseDirectoryWrapper corruptDir = newDirectory();
     corruptDir.setCheckIndexOnClose(false);

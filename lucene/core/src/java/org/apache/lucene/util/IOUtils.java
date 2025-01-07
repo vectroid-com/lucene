@@ -17,7 +17,6 @@
 package org.apache.lucene.util;
 
 import java.io.BufferedReader;
-import java.io.Closeable;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -43,7 +42,7 @@ import java.util.Objects;
 import org.apache.lucene.store.Directory;
 
 /**
- * Utilities for dealing with {@link Closeable}s.
+ * Utilities for dealing with {@link AutoCloseable}s.
  *
  * @lucene.internal
  */
@@ -68,18 +67,18 @@ public final class IOUtils {
    *
    * @param objects objects to call <code>close()</code> on
    */
-  public static void close(Closeable... objects) throws IOException {
+  public static void close(AutoCloseable... objects) throws IOException {
     close(Arrays.asList(objects));
   }
 
   /**
    * Closes all given <code>Closeable</code>s.
    *
-   * @see #close(Closeable...)
+   * @see #close(AutoCloseable...)
    */
-  public static void close(Iterable<? extends Closeable> objects) throws IOException {
+  public static void close(Iterable<? extends AutoCloseable> objects) throws IOException {
     Throwable th = null;
-    for (Closeable object : objects) {
+    for (AutoCloseable object : objects) {
       try {
         if (object != null) {
           object.close();
@@ -100,7 +99,7 @@ public final class IOUtils {
    *
    * @param objects objects to call <code>close()</code> on
    */
-  public static void closeWhileHandlingException(Closeable... objects) {
+  public static void closeWhileHandlingException(AutoCloseable... objects) {
     closeWhileHandlingException(Arrays.asList(objects));
   }
 
@@ -108,12 +107,12 @@ public final class IOUtils {
    * Closes all given <code>Closeable</code>s, suppressing all thrown non {@link Error} exceptions.
    * Even if a {@link Error} is thrown all given closeable are closed.
    *
-   * @see #closeWhileHandlingException(Closeable...)
+   * @see #closeWhileHandlingException(AutoCloseable...)
    */
-  public static void closeWhileHandlingException(Iterable<? extends Closeable> objects) {
+  public static void closeWhileHandlingException(Iterable<? extends AutoCloseable> objects) {
     Error firstError = null;
     Throwable firstThrowable = null;
-    for (Closeable object : objects) {
+    for (AutoCloseable object : objects) {
       try {
         if (object != null) {
           object.close();
@@ -464,7 +463,7 @@ public final class IOUtils {
   public static <T> void applyToAll(Collection<T> collection, IOConsumer<T> consumer)
       throws IOException {
     IOUtils.close(
-        collection.stream().filter(Objects::nonNull).map(t -> (Closeable) () -> consumer.accept(t))
+        collection.stream().filter(Objects::nonNull).map(t -> (AutoCloseable) () -> consumer.accept(t))
             ::iterator);
   }
 }

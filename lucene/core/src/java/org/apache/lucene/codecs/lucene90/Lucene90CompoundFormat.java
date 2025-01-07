@@ -68,10 +68,10 @@ import org.apache.lucene.util.PriorityQueue;
 public final class Lucene90CompoundFormat extends CompoundFormat {
 
   /** Extension of compound file */
-  static final String DATA_EXTENSION = "cfs";
+  public static final String DATA_EXTENSION = "cfs";
 
   /** Extension of compound file entries */
-  static final String ENTRIES_EXTENSION = "cfe";
+  public static final String ENTRIES_EXTENSION = "cfe";
 
   static final String DATA_CODEC = "Lucene90CompoundData";
   static final String ENTRY_CODEC = "Lucene90CompoundEntries";

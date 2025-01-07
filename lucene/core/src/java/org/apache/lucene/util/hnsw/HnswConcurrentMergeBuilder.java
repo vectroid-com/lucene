@@ -218,13 +218,13 @@ public class HnswConcurrentMergeBuilder implements HnswBuilder {
    * This searcher will obtain the lock and make a copy of neighborArray when seeking the graph such
    * that concurrent modification of the graph will not impact the search
    */
-  private static class MergeSearcher extends HnswGraphSearcher {
+  public static class MergeSearcher extends HnswGraphSearcher {
     private final HnswLock hnswLock;
     private int[] nodeBuffer;
     private int upto;
     private int size;
 
-    private MergeSearcher(NeighborQueue candidates, HnswLock hnswLock, BitSet visited) {
+    public MergeSearcher(NeighborQueue candidates, HnswLock hnswLock, BitSet visited) {
       super(candidates, visited);
       this.hnswLock = hnswLock;
     }

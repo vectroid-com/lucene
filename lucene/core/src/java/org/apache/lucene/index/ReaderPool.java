@@ -17,6 +17,8 @@
 
 package org.apache.lucene.index;
 
+import static java.util.Comparator.comparing;
+
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -310,16 +312,16 @@ final class ReaderPool implements Closeable {
   /** Remove all our references to readers, and commits any pending changes. */
   synchronized void dropAll() throws IOException {
     Throwable priorE = null;
-    final Iterator<Map.Entry<SegmentCommitInfo, ReadersAndUpdates>> it =
-        readerMap.entrySet().iterator();
+    // VECTROID: make the iteration order is predictable, sort by segment name. This is only needed
+    // to make the closing order in our tests with our CachingObserver deterministic, no other reason.
+    final Iterator<SegmentCommitInfo> it =
+        readerMap.keySet().stream().sorted(comparing(en -> en.info.name)).iterator();
     while (it.hasNext()) {
-      final ReadersAndUpdates rld = it.next().getValue();
-
       // Important to remove as-we-go, not with .clear()
       // in the end, in case we hit an exception;
       // otherwise we could over-decref if close() is
       // called again:
-      it.remove();
+      final ReadersAndUpdates rld = readerMap.remove(it.next());
 
       // NOTE: it is allowed that these decRefs do not
       // actually close the SRs; this happens when a

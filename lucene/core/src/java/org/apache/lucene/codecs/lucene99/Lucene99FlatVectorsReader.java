@@ -45,8 +45,10 @@ import org.apache.lucene.store.FileTypeHint;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.IOUtils;
+import org.apache.lucene.util.LazyResource;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.apache.lucene.util.hnsw.RandomVectorScorer;
+import org.apache.lucene.vectroid.VectroidCacheHint;
 
 /**
  * Reads vectors from the index segments.
@@ -59,34 +61,42 @@ public final class Lucene99FlatVectorsReader extends FlatVectorsReader {
       RamUsageEstimator.shallowSizeOfInstance(Lucene99FlatVectorsFormat.class);
 
   private final IntObjectHashMap<FieldEntry> fields = new IntObjectHashMap<>();
-  private final IndexInput vectorData;
+  private final LazyResource<IndexInput> vectorData;
   private final FieldInfos fieldInfos;
   private final IOContext dataContext;
 
-  public Lucene99FlatVectorsReader(SegmentReadState state, FlatVectorsScorer scorer)
-      throws IOException {
+  public Lucene99FlatVectorsReader(
+      SegmentReadState state, FlatVectorsScorer scorer, boolean preload) throws IOException {
     super(scorer);
     int versionMeta = readMetadata(state);
     this.fieldInfos = state.fieldInfos;
-    boolean success = false;
-    // Flat formats are used to randomly access vectors from their node ID that is stored
+    // Flat vectors are used to randomly access vectors from their node ID that is stored
     // in the HNSW graph.
     dataContext =
-        state.context.withHints(FileTypeHint.DATA, FileDataHint.KNN_VECTORS, DataAccessHint.RANDOM);
-    try {
-      vectorData =
-          openDataInput(
-              state,
-              versionMeta,
-              Lucene99FlatVectorsFormat.VECTOR_DATA_EXTENSION,
-              Lucene99FlatVectorsFormat.VECTOR_DATA_CODEC_NAME,
-              dataContext);
-      success = true;
-    } finally {
-      if (success == false) {
-        IOUtils.closeWhileHandlingException(this);
-      }
-    }
+        state.context.withHints(FileTypeHint.DATA, FileDataHint.KNN_VECTORS, DataAccessHint.RANDOM,
+            preload ? VectroidCacheHint.CACHE_IN_MEMORY : VectroidCacheHint.DO_NOT_CACHE_IN_MEMORY);
+    vectorData =
+        new LazyResource<>(
+            () -> {
+              boolean success = false;
+              try {
+                IndexInput input =
+                    openDataInput(
+                        state,
+                        versionMeta,
+                        Lucene99FlatVectorsFormat.VECTOR_DATA_EXTENSION,
+                        Lucene99FlatVectorsFormat.VECTOR_DATA_CODEC_NAME,
+                        dataContext);
+                success = true;
+                return input;
+              } catch (IOException e) {
+                throw new RuntimeException(e);
+              } finally {
+                if (success == false) {
+                  IOUtils.closeWhileHandlingException(this);
+                }
+              }
+            });
   }
 
   private int readMetadata(SegmentReadState state) throws IOException {
@@ -145,7 +155,9 @@ public final class Lucene99FlatVectorsReader extends FlatVectorsReader {
                 + versionVectorData,
             in);
       }
-      CodecUtil.retrieveChecksum(in);
+      // VECTROID: ignore checksum verification. This causes that the input file is read twice.
+      //   See also #checkIntegrity()
+      //CodecUtil.retrieveChecksum(in);
       success = true;
       return in;
     } finally {
@@ -179,13 +191,15 @@ public final class Lucene99FlatVectorsReader extends FlatVectorsReader {
 
   @Override
   public void checkIntegrity() throws IOException {
-    CodecUtil.checksumEntireFile(vectorData);
+    // VECTROID: ignore checksum verification. This causes that the input file is read twice.
+    // TODO: do it only when merging, not when querying
+//    CodecUtil.checksumEntireFile(vectorData.get());
   }
 
   @Override
   public FlatVectorsReader getMergeInstance() throws IOException {
     // Update the read advice since vectors are guaranteed to be accessed sequentially for merge
-    vectorData.updateIOContext(dataContext.withHints(DataAccessHint.SEQUENTIAL));
+    vectorData.get().updateIOContext(dataContext.withHints(DataAccessHint.SEQUENTIAL));
     return this;
   }
 
@@ -216,6 +230,7 @@ public final class Lucene99FlatVectorsReader extends FlatVectorsReader {
   public FloatVectorValues getFloatVectorValues(String field) throws IOException {
     final FieldEntry fieldEntry = getFieldEntry(field, VectorEncoding.FLOAT32);
     return OffHeapFloatVectorValues.load(
+        fieldEntry.info.name,
         fieldEntry.similarityFunction,
         vectorScorer,
         fieldEntry.ordToDoc,
@@ -223,13 +238,14 @@ public final class Lucene99FlatVectorsReader extends FlatVectorsReader {
         fieldEntry.dimension,
         fieldEntry.vectorDataOffset,
         fieldEntry.vectorDataLength,
-        vectorData);
+        vectorData.get());
   }
 
   @Override
   public ByteVectorValues getByteVectorValues(String field) throws IOException {
     final FieldEntry fieldEntry = getFieldEntry(field, VectorEncoding.BYTE);
     return OffHeapByteVectorValues.load(
+        fieldEntry.info.name,
         fieldEntry.similarityFunction,
         vectorScorer,
         fieldEntry.ordToDoc,
@@ -237,7 +253,7 @@ public final class Lucene99FlatVectorsReader extends FlatVectorsReader {
         fieldEntry.dimension,
         fieldEntry.vectorDataOffset,
         fieldEntry.vectorDataLength,
-        vectorData);
+        vectorData.get());
   }
 
   @Override
@@ -246,6 +262,7 @@ public final class Lucene99FlatVectorsReader extends FlatVectorsReader {
     return vectorScorer.getRandomVectorScorer(
         fieldEntry.similarityFunction,
         OffHeapFloatVectorValues.load(
+            fieldEntry.info.name,
             fieldEntry.similarityFunction,
             vectorScorer,
             fieldEntry.ordToDoc,
@@ -253,7 +270,7 @@ public final class Lucene99FlatVectorsReader extends FlatVectorsReader {
             fieldEntry.dimension,
             fieldEntry.vectorDataOffset,
             fieldEntry.vectorDataLength,
-            vectorData),
+            vectorData.get()),
         target);
   }
 
@@ -263,6 +280,7 @@ public final class Lucene99FlatVectorsReader extends FlatVectorsReader {
     return vectorScorer.getRandomVectorScorer(
         fieldEntry.similarityFunction,
         OffHeapByteVectorValues.load(
+            fieldEntry.info.name,
             fieldEntry.similarityFunction,
             vectorScorer,
             fieldEntry.ordToDoc,
@@ -270,7 +288,7 @@ public final class Lucene99FlatVectorsReader extends FlatVectorsReader {
             fieldEntry.dimension,
             fieldEntry.vectorDataOffset,
             fieldEntry.vectorDataLength,
-            vectorData),
+            vectorData.get()),
         target);
   }
 
@@ -278,7 +296,7 @@ public final class Lucene99FlatVectorsReader extends FlatVectorsReader {
   public void finishMerge() throws IOException {
     // This makes sure that the access pattern hint is reverted back since HNSW implementation
     // needs it
-    vectorData.updateIOContext(dataContext);
+    vectorData.get().updateIOContext(dataContext);
   }
 
   @Override

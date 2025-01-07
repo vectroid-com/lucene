@@ -85,7 +85,8 @@ public class TestFullPrecisionFloatVectorSimilarityValuesSource extends LuceneTe
         bits,
         bits == 4 ? random().nextBoolean() : false,
         confidenceInterval,
-        null);
+        null,
+        true);
   }
 
   @Test

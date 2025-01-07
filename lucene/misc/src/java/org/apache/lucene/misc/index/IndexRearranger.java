@@ -170,7 +170,7 @@ public class IndexRearranger {
     SegmentInfos sis = SegmentInfos.readLatestCommit(output);
     sis.clear();
     sis.addAll(ordered);
-    sis.commit(output);
+    sis.commit(output, true);
   }
 
   /**

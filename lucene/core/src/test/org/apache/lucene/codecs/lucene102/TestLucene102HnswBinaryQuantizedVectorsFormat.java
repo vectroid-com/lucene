@@ -63,7 +63,7 @@ public class TestLucene102HnswBinaryQuantizedVectorsFormat extends BaseKnnVector
         new FilterCodec("foo", Codec.getDefault()) {
           @Override
           public KnnVectorsFormat knnVectorsFormat() {
-            return new Lucene102HnswBinaryQuantizedVectorsFormat(10, 20, 1, null);
+            return new Lucene102HnswBinaryQuantizedVectorsFormat(10, 20, 1, null, true);
           }
         };
     String expectedPattern =
@@ -140,7 +140,7 @@ public class TestLucene102HnswBinaryQuantizedVectorsFormat extends BaseKnnVector
         IllegalArgumentException.class,
         () ->
             new Lucene102HnswBinaryQuantizedVectorsFormat(
-                20, 100, 1, new SameThreadExecutorService()));
+                20, 100, 1, new SameThreadExecutorService(), true));
   }
 
   // Ensures that all expected vector similarity functions are translatable in the format.

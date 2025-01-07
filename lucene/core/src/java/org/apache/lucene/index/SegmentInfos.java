@@ -119,7 +119,11 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
   /** The version that recorded SegmentCommitInfo IDs */
   public static final int VERSION_86 = 10;
 
-  static final int VERSION_CURRENT = VERSION_86;
+  /// VECTROID: The version that inlines the .si files.
+  /// We use a high number to not clash with version in a future Lucene release
+  public static final int VERSION_86_VECTROID = 1000;
+
+  static final int VERSION_CURRENT = VERSION_86_VECTROID;
 
   /** Name of the generation reference file name */
   static final String OLD_SEGMENTS_GEN = "segments.gen";
@@ -329,6 +333,18 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
             input, magic, CodecUtil.CODEC_MAGIC, CodecUtil.CODEC_MAGIC);
       }
       format = CodecUtil.checkHeaderNoMagic(input, "segments", VERSION_74, VERSION_CURRENT);
+      boolean segmentInfoInlined;
+      if (format == VERSION_86_VECTROID) {
+        // set the flag to true and continue as with VERSION_86
+        segmentInfoInlined = true;
+        format = VERSION_86;
+      } else {
+        // VECTROID: verify the max version, because our modified VERSION_CURRENT is way higher.
+        if (format > VERSION_86) {
+          throw new IndexFormatTooNewException(input, format, VERSION_74, VERSION_86);
+        }
+        segmentInfoInlined = false;
+      }
       byte[] id = new byte[StringHelper.ID_LENGTH];
       input.readBytes(id, 0, id.length);
       CodecUtil.checkIndexHeaderSuffix(input, Long.toString(generation, Character.MAX_RADIX));
@@ -364,7 +380,7 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
       infos.generation = generation;
       infos.lastGeneration = generation;
       infos.luceneVersion = luceneVersion;
-      parseSegmentInfos(directory, input, infos, format);
+      parseSegmentInfos(directory, input, infos, format, segmentInfoInlined);
       return infos;
 
     } catch (Throwable t) {
@@ -380,7 +396,7 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
   }
 
   private static void parseSegmentInfos(
-      Directory directory, DataInput input, SegmentInfos infos, int format) throws IOException {
+      Directory directory, DataInput input, SegmentInfos infos, int format, boolean segmentInfoInlined) throws IOException {
     infos.version = CodecUtil.readBELong(input);
     // System.out.println("READ sis version=" + infos.version);
     infos.counter = input.readVLong();
@@ -402,8 +418,9 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
       byte[] segmentID = new byte[StringHelper.ID_LENGTH];
       input.readBytes(segmentID, 0, segmentID.length);
       Codec codec = readCodec(input);
-      SegmentInfo info =
-          codec.segmentInfoFormat().read(directory, segName, segmentID, IOContext.READONCE);
+      SegmentInfo info = segmentInfoInlined
+          ? codec.segmentInfoFormat().parseSegmentInfo(directory, input, segName, segmentID)
+          : codec.segmentInfoFormat().read(directory, segName, segmentID, IOContext.READONCE);
       info.setCodec(codec);
       totalDocs += info.maxDoc();
       long delGen = CodecUtil.readBELong(input);
@@ -547,11 +564,11 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
   // before finishCommit is called
   boolean pendingCommit;
 
-  private void write(Directory directory) throws IOException {
+  private void write(Directory directory, boolean usePendingSegments) throws IOException {
 
     long nextGeneration = getNextPendingGeneration();
-    String segmentFileName =
-        IndexFileNames.fileNameFromGeneration(IndexFileNames.PENDING_SEGMENTS, "", nextGeneration);
+    String segmentFileName = IndexFileNames.fileNameFromGeneration(
+        usePendingSegments ? IndexFileNames.PENDING_SEGMENTS : IndexFileNames.SEGMENTS, "", nextGeneration);
 
     // Always advance the generation on write:
     generation = nextGeneration;
@@ -563,7 +580,11 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
       segnOutput = directory.createOutput(segmentFileName, IOContext.DEFAULT);
       write(segnOutput);
       segnOutput.close();
-      directory.sync(Collections.singleton(segmentFileName));
+      // VECTROID: only sync the segments file if it's a temporary file. If it's the final file, we'll sync it after
+      // syncing the other files.
+      if (usePendingSegments) {
+        directory.sync(Collections.singleton(segmentFileName));
+      }
       success = true;
     } finally {
       if (success) {
@@ -636,6 +657,8 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
       }
       out.writeBytes(segmentID, segmentID.length);
       out.writeString(si.getCodec().getName());
+      // VECTROID: write .si file inline
+      si.getCodec().segmentInfoFormat().writeSegmentInfo(out, si);
 
       CodecUtil.writeBELong(out, siPerCommit.getDelGen());
       int delCount = siPerCommit.getDelCount();
@@ -875,19 +898,21 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
     this.generation = generation;
   }
 
-  final void rollbackCommit(Directory dir) {
+  final void rollbackCommit(Directory dir, boolean usePendingSegments) {
     if (pendingCommit) {
       pendingCommit = false;
 
-      // we try to clean up our pending_segments_N
+      if (usePendingSegments) {
+        // we try to clean up our pending_segments_N
 
-      // Must carefully compute fileName from "generation"
-      // since lastGeneration isn't incremented:
-      final String pending =
-          IndexFileNames.fileNameFromGeneration(IndexFileNames.PENDING_SEGMENTS, "", generation);
-      // Suppress so we keep throwing the original exception
-      // in our caller
-      IOUtils.deleteFilesIgnoringExceptions(dir, pending);
+        // Must carefully compute fileName from "generation"
+        // since lastGeneration isn't incremented:
+        final String pending =
+            IndexFileNames.fileNameFromGeneration(IndexFileNames.PENDING_SEGMENTS, "", generation);
+        // Suppress so we keep throwing the original exception
+        // in our caller
+        IOUtils.deleteFilesIgnoringExceptions(dir, pending);
+      }
     }
   }
 
@@ -899,12 +924,12 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
    * <p>Note: {@link #changed()} should be called prior to this method if changes have been made to
    * this {@link SegmentInfos} instance
    */
-  final void prepareCommit(Directory dir) throws IOException {
+  final void prepareCommit(Directory dir, boolean usePendingSegments) throws IOException {
     if (pendingCommit) {
       throw new IllegalStateException("prepareCommit was already called");
     }
     dir.syncMetaData();
-    write(dir);
+    write(dir, usePendingSegments);
   }
 
   /**
@@ -929,32 +954,43 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
   }
 
   /** Returns the committed segments_N filename. */
-  final String finishCommit(Directory dir) throws IOException {
+  final String finishCommit(Directory dir, boolean usePendingSegments) throws IOException {
     if (pendingCommit == false) {
       throw new IllegalStateException("prepareCommit was not called");
     }
     boolean successRenameAndSync = false;
-    final String dest;
+    final String dest = IndexFileNames.fileNameFromGeneration(IndexFileNames.SEGMENTS, "", generation);;
     try {
-      final String src =
-          IndexFileNames.fileNameFromGeneration(IndexFileNames.PENDING_SEGMENTS, "", generation);
-      dest = IndexFileNames.fileNameFromGeneration(IndexFileNames.SEGMENTS, "", generation);
-      dir.rename(src, dest);
-      try {
-        dir.syncMetaData();
-        successRenameAndSync = true;
-      } finally {
-        if (successRenameAndSync == false) {
-          // at this point we already created the file but missed to sync directory let's also
-          // remove the
-          // renamed file
-          IOUtils.deleteFilesIgnoringExceptions(dir, dest);
+      if (usePendingSegments) {
+        final String src =
+            IndexFileNames.fileNameFromGeneration(IndexFileNames.PENDING_SEGMENTS, "", generation);
+        dir.rename(src, dest);
+        try {
+          dir.syncMetaData();
+          successRenameAndSync = true;
+        } finally {
+          if (successRenameAndSync == false) {
+            // at this point we already created the file but missed to sync directory let's also
+            // remove the
+            // renamed file
+            IOUtils.deleteFilesIgnoringExceptions(dir, dest);
+          }
+        }
+      } else {
+        try {
+          dir.sync(Collections.singleton(dest));
+          dir.syncMetaData();
+          successRenameAndSync = true;
+        } finally {
+          if (successRenameAndSync == false) {
+            IOUtils.deleteFilesIgnoringExceptions(dir, dest);
+          }
         }
       }
     } finally {
       if (successRenameAndSync == false) {
         // deletes pending_segments_N:
-        rollbackCommit(dir);
+        rollbackCommit(dir, usePendingSegments);
       }
     }
 
@@ -969,9 +1005,9 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
    * <p>Note: {@link #changed()} should be called prior to this method if changes have been made to
    * this {@link SegmentInfos} instance
    */
-  public final void commit(Directory dir) throws IOException {
-    prepareCommit(dir);
-    finishCommit(dir);
+  public final void commit(Directory dir, boolean usePendingSegments) throws IOException {
+    prepareCommit(dir, usePendingSegments);
+    finishCommit(dir, usePendingSegments);
   }
 
   /** Returns readable description of this segment. */

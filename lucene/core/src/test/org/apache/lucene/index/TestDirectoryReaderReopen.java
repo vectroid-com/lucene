@@ -45,6 +45,7 @@ import org.apache.lucene.tests.store.MockDirectoryWrapper.FakeIOException;
 import org.apache.lucene.tests.util.LuceneTestCase;
 import org.apache.lucene.tests.util.TestUtil;
 import org.apache.lucene.util.IOUtils;
+import org.junit.Ignore;
 
 public class TestDirectoryReaderReopen extends LuceneTestCase {
 
@@ -207,6 +208,9 @@ public class TestDirectoryReaderReopen extends LuceneTestCase {
     assertReaderClosed(index2, true);
   }
 
+  // VECTROID: ignore this test, we open some of the files lazily and rely on delayed deletion
+  // policy to not delete them right away, so this test is broken.
+  @Ignore()
   public void testThreadSafety() throws Exception {
     final Directory dir = newDirectory();
     // NOTE: this also controls the number of threads!

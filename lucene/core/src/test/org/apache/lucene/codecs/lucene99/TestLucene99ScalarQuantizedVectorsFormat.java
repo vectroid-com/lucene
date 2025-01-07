@@ -64,7 +64,7 @@ public class TestLucene99ScalarQuantizedVectorsFormat extends BaseKnnVectorsForm
     }
     format =
         new Lucene99ScalarQuantizedVectorsFormat(
-            confidenceInterval, bits, bits == 4 ? random().nextBoolean() : false);
+            confidenceInterval, bits, bits == 4 ? random().nextBoolean() : false, true);
     super.setUp();
   }
 
@@ -193,7 +193,7 @@ public class TestLucene99ScalarQuantizedVectorsFormat extends BaseKnnVectorsForm
         new FilterCodec("foo", Codec.getDefault()) {
           @Override
           public KnnVectorsFormat knnVectorsFormat() {
-            return new Lucene99ScalarQuantizedVectorsFormat(0.9f, (byte) 4, false);
+            return new Lucene99ScalarQuantizedVectorsFormat(0.9f, (byte) 4, false, true);
           }
         };
     String expectedPattern =
@@ -207,16 +207,16 @@ public class TestLucene99ScalarQuantizedVectorsFormat extends BaseKnnVectorsForm
   public void testLimits() {
     expectThrows(
         IllegalArgumentException.class,
-        () -> new Lucene99ScalarQuantizedVectorsFormat(1.1f, 7, false));
+        () -> new Lucene99ScalarQuantizedVectorsFormat(1.1f, 7, false, true));
     expectThrows(
         IllegalArgumentException.class,
-        () -> new Lucene99ScalarQuantizedVectorsFormat(null, -1, false));
+        () -> new Lucene99ScalarQuantizedVectorsFormat(null, -1, false, true));
     expectThrows(
         IllegalArgumentException.class,
-        () -> new Lucene99ScalarQuantizedVectorsFormat(null, 5, false));
+        () -> new Lucene99ScalarQuantizedVectorsFormat(null, 5, false, true));
     expectThrows(
         IllegalArgumentException.class,
-        () -> new Lucene99ScalarQuantizedVectorsFormat(null, 9, false));
+        () -> new Lucene99ScalarQuantizedVectorsFormat(null, 9, false, true));
   }
 
   @Override

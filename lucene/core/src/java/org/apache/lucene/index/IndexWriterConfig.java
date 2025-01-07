@@ -561,4 +561,23 @@ public final class IndexWriterConfig extends LiveIndexWriterConfig {
     this.parentField = parentField;
     return this;
   }
+
+  /**
+   * Sets if the {@link IndexWriter} should create and sync a temporary {@code pending_segments_N} file
+   * and then rename it to {@code segments_N}. Default is <code>true</code>.
+   * <p>
+   * Use {@code false} to write the {@code segments_N} file directly.
+   * <p>
+   * The temporary files ensures atomicity of creating the {@code segments_N} file as the last file written during the
+   * commit, thanks to the {@link java.nio.file.Files#move} operation with {@link
+   * java.nio.file.StandardCopyOption#ATOMIC_MOVE}. However, specialized file systems backed by object storage used by
+   * Vectroid, in combination with Vectroid's caching directory implementations ensure that the file is atomically
+   * written when {@link org.apache.lucene.store.Directory#sync} is called and a partial file cannot appear in the
+   * target directory, so the temporary file is not only unnecessary, but is a performance and cost penalty. Set this
+   * option to {@code false} in that situation.
+   */
+  public IndexWriterConfig setUsePendingSegments(boolean usePendingSegments) {
+    this.usePendingSegments = usePendingSegments;
+    return this;
+  }
 }

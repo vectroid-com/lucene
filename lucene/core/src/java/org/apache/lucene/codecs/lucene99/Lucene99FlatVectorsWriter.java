@@ -19,12 +19,14 @@ package org.apache.lucene.codecs.lucene99;
 
 import static org.apache.lucene.codecs.lucene99.Lucene99FlatVectorsFormat.DIRECT_MONOTONIC_BLOCK_SHIFT;
 import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
+import static org.apache.lucene.util.VectroidLuceneUtil.sneakyThrow;
 
 import java.io.Closeable;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.codecs.KnnVectorsWriter;
@@ -39,6 +41,7 @@ import org.apache.lucene.index.DocsWithFieldSet;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.FloatVectorValues;
 import org.apache.lucene.index.IndexFileNames;
+import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.KnnVectorValues;
 import org.apache.lucene.index.MergeState;
 import org.apache.lucene.index.SegmentWriteState;
@@ -53,9 +56,12 @@ import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.RamUsageEstimator;
+import org.apache.lucene.util.VectroidLuceneUtil.BiConsumerEx;
+import org.apache.lucene.util.VectroidLuceneUtil.ConsumerEx;
 import org.apache.lucene.util.hnsw.CloseableRandomVectorScorerSupplier;
 import org.apache.lucene.util.hnsw.RandomVectorScorerSupplier;
 import org.apache.lucene.util.hnsw.UpdateableRandomVectorScorer;
+import org.apache.lucene.vectroid.SwMrList;
 
 /**
  * Writes vector values to index segments.
@@ -68,15 +74,30 @@ public final class Lucene99FlatVectorsWriter extends FlatVectorsWriter {
       RamUsageEstimator.shallowSizeOfInstance(Lucene99FlatVectorsWriter.class);
 
   private final SegmentWriteState segmentWriteState;
+  private final boolean useTemporaryVectorFile;
   private final IndexOutput meta, vectorData;
 
   private final List<FieldWriter<?>> fields = new ArrayList<>();
   private boolean finished;
 
-  public Lucene99FlatVectorsWriter(SegmentWriteState state, FlatVectorsScorer scorer)
+  /// The parameter `useTemporaryVectorFile` controls whether the [IndexWriter] should create a
+  /// temporary vector file during merges. Default is `true`.
+  ///
+  /// During merges, the [IndexWriter] creates a temporary file with the merged vectors and uses it
+  /// to build the HNSW graph, and later copies it to target file. The reason is that the merge
+  /// process has no memory accounting and heavily relies on off-heap memory, which in Lucene
+  /// parlance means files, to reduce memory need. However, these vectors are heavily accessed, and
+  /// if they don't fit into the page cache, the graph-building is very slow. If you disable this
+  /// option, the vectors will be stored directly in the heap memory; you must ensure that your VM
+  /// has enough heap memory for the maximum segment size (controlled through, for example {@link
+  /// org.apache.lucene.index.TieredMergePolicy#setMaxMergedSegmentMB}).
+  ///
+  /// Disabling this option is suitable for dedicated indexing machines.
+  public Lucene99FlatVectorsWriter(SegmentWriteState state, FlatVectorsScorer scorer, boolean useTemporaryVectorFile)
       throws IOException {
     super(scorer);
     segmentWriteState = state;
+    this.useTemporaryVectorFile = useTemporaryVectorFile;
     String metaFileName =
         IndexFileNames.segmentFileName(
             state.segmentInfo.name, state.segmentSuffix, Lucene99FlatVectorsFormat.META_EXTENSION);
@@ -148,7 +169,7 @@ public final class Lucene99FlatVectorsWriter extends FlatVectorsWriter {
   }
 
   @Override
-  public long ramBytesUsed() {
+  public long ramBytesUsedNonHard() {
     long total = SHALLOW_RAM_BYTES_USED;
     for (FieldWriter<?> field : fields) {
       total += field.ramBytesUsed();
@@ -235,11 +256,11 @@ public final class Lucene99FlatVectorsWriter extends FlatVectorsWriter {
         switch (fieldInfo.getVectorEncoding()) {
           case BYTE ->
               writeByteVectorData(
-                  vectorData,
+                  vector -> vectorData.writeBytes(vector, vector.length),
                   KnnVectorsWriter.MergedVectorValues.mergeByteVectorValues(fieldInfo, mergeState));
           case FLOAT32 ->
               writeVectorData(
-                  vectorData,
+                  (x, bytes) -> vectorData.writeBytes(bytes, bytes.length),
                   KnnVectorsWriter.MergedVectorValues.mergeFloatVectorValues(
                       fieldInfo, mergeState));
         };
@@ -256,40 +277,21 @@ public final class Lucene99FlatVectorsWriter extends FlatVectorsWriter {
   public CloseableRandomVectorScorerSupplier mergeOneFieldToIndex(
       FieldInfo fieldInfo, MergeState mergeState) throws IOException {
     long vectorDataOffset = vectorData.alignFilePointer(Float.BYTES);
-    IndexOutput tempVectorData =
-        segmentWriteState.directory.createTempOutput(
-            vectorData.getName(), "temp", segmentWriteState.context);
-    IndexInput vectorDataInput = null;
+    TempVectorStorage tempVectorStorage =
+        useTemporaryVectorFile ? new OffHeapTempVectorStorage(fieldInfo) : new OnHeapTempVectorStorage();
     boolean success = false;
     try {
       // write the vector data to a temporary file
       DocsWithFieldSet docsWithField =
           switch (fieldInfo.getVectorEncoding()) {
             case BYTE ->
-                writeByteVectorData(
-                    tempVectorData,
-                    KnnVectorsWriter.MergedVectorValues.mergeByteVectorValues(
-                        fieldInfo, mergeState));
+                tempVectorStorage.writeByteVectorValues(MergedVectorValues.mergeByteVectorValues(
+                    fieldInfo, mergeState));
             case FLOAT32 ->
-                writeVectorData(
-                    tempVectorData,
-                    KnnVectorsWriter.MergedVectorValues.mergeFloatVectorValues(
-                        fieldInfo, mergeState));
+                tempVectorStorage.writeFloatVectorValues(MergedVectorValues.mergeFloatVectorValues(
+                    fieldInfo, mergeState));
           };
-      CodecUtil.writeFooter(tempVectorData);
-      IOUtils.close(tempVectorData);
 
-      // This temp file will be accessed in a random-access fashion to construct the HNSW graph.
-      // Note: don't use the context from the state, which is a flush/merge context, not expecting
-      // to perform random reads.
-      vectorDataInput =
-          segmentWriteState.directory.openInput(
-              tempVectorData.getName(),
-              IOContext.DEFAULT.withHints(
-                  FileTypeHint.DATA, FileDataHint.KNN_VECTORS, DataAccessHint.RANDOM));
-      // copy the temporary file vectors to the actual data file
-      vectorData.copyBytes(vectorDataInput, vectorDataInput.length() - CodecUtil.footerLength());
-      CodecUtil.retrieveChecksum(vectorDataInput);
       long vectorDataLength = vectorData.getFilePointer() - vectorDataOffset;
       writeMeta(
           fieldInfo,
@@ -298,42 +300,17 @@ public final class Lucene99FlatVectorsWriter extends FlatVectorsWriter {
           vectorDataLength,
           docsWithField);
       success = true;
-      final IndexInput finalVectorDataInput = vectorDataInput;
       final RandomVectorScorerSupplier randomVectorScorerSupplier =
-          switch (fieldInfo.getVectorEncoding()) {
-            case BYTE ->
-                vectorsScorer.getRandomVectorScorerSupplier(
-                    fieldInfo.getVectorSimilarityFunction(),
-                    new OffHeapByteVectorValues.DenseOffHeapVectorValues(
-                        fieldInfo.getVectorDimension(),
-                        docsWithField.cardinality(),
-                        finalVectorDataInput,
-                        fieldInfo.getVectorDimension() * Byte.BYTES,
-                        vectorsScorer,
-                        fieldInfo.getVectorSimilarityFunction()));
-            case FLOAT32 ->
-                vectorsScorer.getRandomVectorScorerSupplier(
-                    fieldInfo.getVectorSimilarityFunction(),
-                    new OffHeapFloatVectorValues.DenseOffHeapVectorValues(
-                        fieldInfo.getVectorDimension(),
-                        docsWithField.cardinality(),
-                        finalVectorDataInput,
-                        fieldInfo.getVectorDimension() * Float.BYTES,
-                        vectorsScorer,
-                        fieldInfo.getVectorSimilarityFunction()));
-          };
+          vectorsScorer.getRandomVectorScorerSupplier(
+              fieldInfo.getVectorSimilarityFunction(),
+              tempVectorStorage.getVectorValues());
       return new FlatCloseableRandomVectorScorerSupplier(
-          () -> {
-            IOUtils.close(finalVectorDataInput);
-            segmentWriteState.directory.deleteFile(tempVectorData.getName());
-          },
+          tempVectorStorage,
           docsWithField.cardinality(),
           randomVectorScorerSupplier);
     } finally {
       if (success == false) {
-        IOUtils.closeWhileHandlingException(vectorDataInput, tempVectorData);
-        IOUtils.deleteFilesIgnoringExceptions(
-            segmentWriteState.directory, tempVectorData.getName());
+        tempVectorStorage.closeOnFailure();
       }
     }
   }
@@ -364,14 +341,14 @@ public final class Lucene99FlatVectorsWriter extends FlatVectorsWriter {
    * vectors.
    */
   private static DocsWithFieldSet writeByteVectorData(
-      IndexOutput output, ByteVectorValues byteVectorValues) throws IOException {
+      ConsumerEx<byte[]> target, ByteVectorValues byteVectorValues) throws IOException {
     DocsWithFieldSet docsWithField = new DocsWithFieldSet();
     KnnVectorValues.DocIndexIterator iter = byteVectorValues.iterator();
     for (int docV = iter.nextDoc(); docV != NO_MORE_DOCS; docV = iter.nextDoc()) {
       // write vector
       byte[] binaryValue = byteVectorValues.vectorValue(iter.index());
       assert binaryValue.length == byteVectorValues.dimension() * VectorEncoding.BYTE.byteSize;
-      output.writeBytes(binaryValue, binaryValue.length);
+      target.accept(binaryValue);
       docsWithField.add(docV);
     }
     return docsWithField;
@@ -381,7 +358,7 @@ public final class Lucene99FlatVectorsWriter extends FlatVectorsWriter {
    * Writes the vector values to the output and returns a set of documents that contains vectors.
    */
   private static DocsWithFieldSet writeVectorData(
-      IndexOutput output, FloatVectorValues floatVectorValues) throws IOException {
+      BiConsumerEx<float[], byte[]> target, FloatVectorValues floatVectorValues) throws IOException {
     DocsWithFieldSet docsWithField = new DocsWithFieldSet();
     ByteBuffer buffer =
         ByteBuffer.allocate(floatVectorValues.dimension() * VectorEncoding.FLOAT32.byteSize)
@@ -391,7 +368,7 @@ public final class Lucene99FlatVectorsWriter extends FlatVectorsWriter {
       // write vector
       float[] value = floatVectorValues.vectorValue(iter.index());
       buffer.asFloatBuffer().put(value);
-      output.writeBytes(buffer.array(), buffer.limit());
+      target.accept(value, buffer.array());
       docsWithField.add(docV);
     }
     return docsWithField;
@@ -438,7 +415,7 @@ public final class Lucene99FlatVectorsWriter extends FlatVectorsWriter {
       this.fieldInfo = fieldInfo;
       this.dim = fieldInfo.getVectorDimension();
       this.docsWithField = new DocsWithFieldSet();
-      vectors = new ArrayList<>();
+      vectors = new SwMrList<>(10);
     }
 
     @Override
@@ -528,6 +505,139 @@ public final class Lucene99FlatVectorsWriter extends FlatVectorsWriter {
     @Override
     public int totalVectorCount() {
       return numVectors;
+    }
+  }
+
+  private interface TempVectorStorage extends Closeable {
+    DocsWithFieldSet writeByteVectorValues(ByteVectorValues vectorValues) throws IOException;
+    DocsWithFieldSet writeFloatVectorValues(FloatVectorValues vectorValues) throws IOException;
+    KnnVectorValues getVectorValues();
+    void close() throws IOException;
+    void closeOnFailure();
+  }
+
+  private final class OnHeapTempVectorStorage implements TempVectorStorage {
+    private List<byte[]> byteVectors;
+    private List<float[]> floatVectors;
+    private int dimension;
+
+    @Override
+    public DocsWithFieldSet writeByteVectorValues(ByteVectorValues vectorValues) throws IOException {
+      dimension = vectorValues.dimension();
+      byteVectors = new ArrayList<>(vectorValues.size());
+      return writeByteVectorData(vector -> {
+        try {
+          vectorData.writeBytes(vector, vector.length);
+        } catch (IOException ex) {
+          throw sneakyThrow(ex);
+        }
+        byteVectors.add(Arrays.copyOf(vector, vector.length));
+      }, vectorValues);
+    }
+
+    @Override
+    public DocsWithFieldSet writeFloatVectorValues(FloatVectorValues vectorValues) throws IOException {
+      dimension = vectorValues.dimension();
+      floatVectors = new ArrayList<>(vectorValues.size());
+      return writeVectorData((vector, bytes) -> {
+        try {
+          vectorData.writeBytes(bytes, bytes.length);
+        } catch (IOException ex) {
+          throw sneakyThrow(ex);
+        }
+        floatVectors.add(Arrays.copyOf(vector, vector.length));
+      }, vectorValues);
+    }
+
+    @Override
+    public KnnVectorValues getVectorValues() {
+      if (byteVectors != null) {
+        return ByteVectorValues.fromBytes(byteVectors, dimension);
+      } else {
+        return FloatVectorValues.fromFloats(floatVectors, dimension);
+      }
+    }
+
+    @Override public void close() { }
+    @Override public void closeOnFailure() { }
+  }
+
+  private final class OffHeapTempVectorStorage implements TempVectorStorage {
+    private final FieldInfo fieldInfo;
+
+    private final IndexOutput tempVectorData;
+    private IndexInput vectorDataInput;
+    private KnnVectorValues vectorValues;
+
+    private OffHeapTempVectorStorage(FieldInfo fieldInfo) throws IOException {
+      this.fieldInfo = fieldInfo;
+      this.tempVectorData = segmentWriteState.directory.createTempOutput(
+          vectorData.getName(), "temp", segmentWriteState.context);
+    }
+
+    @Override
+    public DocsWithFieldSet writeByteVectorValues(ByteVectorValues vectorValues) throws IOException {
+      DocsWithFieldSet res = writeByteVectorData(
+          vector -> tempVectorData.writeBytes(vector, vector.length), vectorValues);
+      finishTemp();
+      this.vectorValues = new OffHeapByteVectorValues.DenseOffHeapVectorValues(
+          fieldInfo.getVectorDimension(),
+          res.cardinality(),
+          vectorDataInput,
+          fieldInfo.getVectorDimension() * Byte.BYTES,
+          vectorsScorer,
+          fieldInfo.getVectorSimilarityFunction());
+
+      return res;
+    }
+
+    @Override
+    public DocsWithFieldSet writeFloatVectorValues(FloatVectorValues vectorValues) throws IOException {
+      DocsWithFieldSet res = writeVectorData(
+          (vector, bytes) -> tempVectorData.writeBytes(bytes, bytes.length), vectorValues);
+      finishTemp();
+      this.vectorValues = new OffHeapFloatVectorValues.DenseOffHeapVectorValues(
+          fieldInfo.getVectorDimension(),
+          res.cardinality(),
+          vectorDataInput,
+          fieldInfo.getVectorDimension() * Float.BYTES,
+          vectorsScorer,
+          fieldInfo.getVectorSimilarityFunction());
+      return res;
+    }
+
+    /// Finish and close the temp file, open the input file.
+    private void finishTemp() throws IOException {
+      CodecUtil.writeFooter(tempVectorData);
+      IOUtils.close(tempVectorData);
+      // This temp file will be accessed in a random-access fashion to construct the HNSW graph.
+      // Note: don't use the context from the state, which is a flush/merge context, not expecting
+      // to perform random reads.
+      vectorDataInput =
+          segmentWriteState.directory.openInput(
+              tempVectorData.getName(),
+              IOContext.DEFAULT.withHints(
+                  FileTypeHint.DATA, FileDataHint.KNN_VECTORS, DataAccessHint.RANDOM));
+      // copy the temporary file vectors to the actual data file
+      vectorData.copyBytes(vectorDataInput, vectorDataInput.length() - CodecUtil.footerLength());
+      CodecUtil.retrieveChecksum(vectorDataInput);
+    }
+
+    @Override
+    public KnnVectorValues getVectorValues() {
+      return vectorValues;
+    }
+
+    @Override
+    public void close() throws IOException {
+      IOUtils.close(vectorDataInput);
+      segmentWriteState.directory.deleteFile(tempVectorData.getName());
+    }
+
+    @Override
+    public void closeOnFailure() {
+      IOUtils.closeWhileHandlingException(vectorDataInput, tempVectorData);
+      IOUtils.deleteFilesIgnoringExceptions(segmentWriteState.directory, tempVectorData.getName());
     }
   }
 }

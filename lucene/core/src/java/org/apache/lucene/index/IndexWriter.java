@@ -290,6 +290,22 @@ public class IndexWriter
 
   private final ReentrantLock writeDocValuesLock = new ReentrantLock();
 
+  /// VECTROID: return the number of live documents in the index. Tested to work correctly right after [#commit()],
+  /// before any other documents are added/deleted. The return value at other times might be incorrect.
+  public long vectroidNumDocsAfterCommit() {
+    long numDocs = 0;
+    for (SegmentCommitInfo sci : segmentInfos.asList()) {
+      numDocs += sci.info.maxDoc() - sci.getDelCount();
+    }
+    return numDocs;
+  }
+
+  /// VECTROID: return the number of segments in the index. Tested to work correctly right after [#commit()], before any
+  /// other documents are added/deleted. The return value at other times might be incorrect.
+  public int vectroidNumSegments() {
+    return segmentInfos.size();
+  }
+
   static final class EventQueue implements Closeable {
     private volatile boolean closed;
     // we use a semaphore here instead of simply synced methods to allow
@@ -1124,7 +1140,7 @@ public class IndexWriter
       // start with previous field numbers, but new FieldInfos
       // NOTE: this is correct even for an NRT reader because we'll pull FieldInfos even for the
       // un-committed segments:
-      globalFieldNumberMap = getFieldNumberMap();
+      globalFieldNumberMap = getFieldNumberMap(reader);
       if (create == false
           && conf.getParentField() != null
           && globalFieldNumberMap.getFieldNames().isEmpty() == false
@@ -1267,17 +1283,30 @@ public class IndexWriter
   }
 
   /**
-   * Loads or returns the already loaded the global field number map for this {@link SegmentInfos}.
-   * If this {@link SegmentInfos} has no global field number map the returned instance is empty
+   * Loads the global field number map for this {@link SegmentInfos}.
+   * If this {@link SegmentInfos} has no global field number map the returned instance is empty.
+   *
+   * <p>If the a {@code reader} is given, then instead of reading the field info file (.fnm), the
+   * field infos from its leaves are used.
+   *
+   * <p>Maybe it will be merged to Lucene: https://github.com/apache/lucene/pull/15683
    */
-  private FieldNumbers getFieldNumberMap() throws IOException {
+  private FieldNumbers getFieldNumberMap(StandardDirectoryReader reader) throws IOException {
     final FieldNumbers map =
         new FieldNumbers(config.getSoftDeletesField(), config.getParentField());
 
-    for (SegmentCommitInfo info : segmentInfos) {
-      FieldInfos fis = readFieldInfos(info);
-      for (FieldInfo fi : fis) {
-        map.addOrGet(fi);
+    if (reader == null) {
+      for (SegmentCommitInfo info : segmentInfos) {
+        FieldInfos fis = readFieldInfos(info);
+        for (FieldInfo fi : fis) {
+          map.addOrGet(fi);
+        }
+      }
+    } else {
+      for (LeafReaderContext leafContext : reader.leaves()) {
+        for (FieldInfo fi : leafContext.reader().getFieldInfos()) {
+          map.addOrGet(fi);
+        }
       }
     }
     return map;
@@ -2527,7 +2556,7 @@ public class IndexWriter
       eventQueue.close();
       synchronized (this) {
         if (pendingCommit != null) {
-          pendingCommit.rollbackCommit(directory);
+          pendingCommit.rollbackCommit(directory, config.getUsePendingSegments());
           try {
             deleter.decRef(pendingCommit);
           } finally {
@@ -2584,7 +2613,7 @@ public class IndexWriter
                 // don't leak a segments_N file if there is a pending commit
                 if (pendingCommit != null) {
                   try {
-                    pendingCommit.rollbackCommit(directory);
+                    pendingCommit.rollbackCommit(directory, config.getUsePendingSegments());
                     deleter.decRef(pendingCommit);
                   } catch (Throwable t) {
                     throwable.addSuppressed(t);
@@ -3536,7 +3565,8 @@ public class IndexWriter
     // creating CFS so that 1) .si isn't slurped into CFS,
     // and 2) .si reflects useCompoundFile=true change
     // above:
-    codec.segmentInfoFormat().write(trackingDir, merge.getMergeInfo().info, context);
+    // VECTROID: .si file is written inline as a part of the segments file
+//    codec.segmentInfoFormat().write(trackingDir, merge.getMergeInfo().info, context);
     merge.getMergeInfo().info.addFiles(trackingDir.getCreatedFiles());
     // Return without registering the segment files with IndexWriter.
     // We do this together for all merges triggered by an addIndexes API,
@@ -4193,7 +4223,7 @@ public class IndexWriter
               infoStream.message("IW", "commit: pendingCommit != null");
             }
 
-            committedSegmentsFileName = pendingCommit.finishCommit(directory);
+            committedSegmentsFileName = pendingCommit.finishCommit(directory, config.getUsePendingSegments());
 
             // we committed, if anything goes wrong after this, we are screwed and it's a tragedy:
             commitCompleted = true;
@@ -5457,7 +5487,8 @@ public class IndexWriter
       // above:
       boolean success2 = false;
       try {
-        codec.segmentInfoFormat().write(directory, merge.info.info, context);
+        // VECTROID: .si file is written inline as a part of the segments file
+//        codec.segmentInfoFormat().write(directory, merge.info.info, context);
         success2 = true;
       } finally {
         if (!success2) {
@@ -5668,7 +5699,7 @@ public class IndexWriter
           // Exception here means nothing is prepared
           // (this method unwinds everything it did on
           // an exception)
-          toSync.prepareCommit(directory);
+          toSync.prepareCommit(directory, config.getUsePendingSegments());
           if (infoStream.isEnabled("IW")) {
             infoStream.message(
                 "IW",
@@ -5694,7 +5725,7 @@ public class IndexWriter
           if (!success) {
             pendingCommitSet = false;
             pendingCommit = null;
-            toSync.rollbackCommit(directory);
+            toSync.rollbackCommit(directory, config.getUsePendingSegments());
           }
         }
 

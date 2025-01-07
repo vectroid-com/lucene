@@ -205,7 +205,7 @@ public abstract class BaseIndexFileFormatTestCase extends LuceneTestCase {
           "Cannot set the created version on a Directory that already has segments");
     }
     if (getCreatedVersionMajor() != Version.LATEST.major || random().nextBoolean()) {
-      new SegmentInfos(getCreatedVersionMajor()).commit(d);
+      new SegmentInfos(getCreatedVersionMajor()).commit(d, true);
     }
     return d;
   }

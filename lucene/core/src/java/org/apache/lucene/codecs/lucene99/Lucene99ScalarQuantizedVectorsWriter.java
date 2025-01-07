@@ -298,7 +298,7 @@ public final class Lucene99ScalarQuantizedVectorsWriter extends FlatVectorsWrite
   }
 
   @Override
-  public long ramBytesUsed() {
+  public long ramBytesUsedNonHard() {
     long total = SHALLOW_RAM_BYTES_USED;
     for (FieldWriter field : fields) {
       // the field tracks the delegate field usage

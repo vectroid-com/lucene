@@ -4196,7 +4196,7 @@ public final class CheckIndex implements Closeable {
           "can only exorcise an index that was fully checked (this status checked a subset of segments)");
     }
     result.newSegments.changed();
-    result.newSegments.commit(result.dir);
+    result.newSegments.commit(result.dir, true);
   }
 
   @SuppressWarnings("NonFinalStaticField")

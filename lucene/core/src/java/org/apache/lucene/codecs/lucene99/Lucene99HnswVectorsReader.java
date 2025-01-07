@@ -53,6 +53,7 @@ import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.GroupVIntUtil;
 import org.apache.lucene.util.IOSupplier;
 import org.apache.lucene.util.IOUtils;
+import org.apache.lucene.util.LazyResource;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.apache.lucene.util.hnsw.HnswGraph;
 import org.apache.lucene.util.hnsw.HnswGraphSearcher;
@@ -79,7 +80,7 @@ public final class Lucene99HnswVectorsReader extends KnnVectorsReader
   private final FlatVectorsReader flatVectorsReader;
   private final FieldInfos fieldInfos;
   private final IntObjectHashMap<FieldEntry> fields;
-  private final IndexInput vectorIndex;
+  private final LazyResource<IndexInput> vectorIndex;
   private final int version;
 
   public Lucene99HnswVectorsReader(SegmentReadState state, FlatVectorsReader flatVectorsReader)
@@ -111,18 +112,26 @@ public final class Lucene99HnswVectorsReader extends KnnVectorsReader
       }
       this.version = versionMeta;
       this.vectorIndex =
-          openDataInput(
-              state,
-              versionMeta,
-              Lucene99HnswVectorsFormat.VECTOR_INDEX_EXTENSION,
-              Lucene99HnswVectorsFormat.VECTOR_INDEX_CODEC_NAME,
-              state.context.withHints(
-                  // Even though this input is referred to an `indexIn`, it doesn't qualify as
-                  // FileTypeHint#INDEX since it's a large file
-                  FileTypeHint.DATA,
-                  FileDataHint.KNN_VECTORS,
-                  DataAccessHint.RANDOM,
-                  PreloadHint.INSTANCE));
+          new LazyResource<>(
+              () -> {
+                try {
+                  return openDataInput(
+                      state,
+                      version,
+                      Lucene99HnswVectorsFormat.VECTOR_INDEX_EXTENSION,
+                      Lucene99HnswVectorsFormat.VECTOR_INDEX_CODEC_NAME,
+                      state.context.withHints(
+                          // Even though this input is referred to an `indexIn`, it doesn't qualify as
+                          // FileTypeHint#INDEX since it's a large file
+                          FileTypeHint.DATA,
+                          FileDataHint.KNN_VECTORS,
+                          DataAccessHint.RANDOM,
+                          PreloadHint.INSTANCE));
+                } catch (Throwable t) {
+                  IOUtils.closeWhileHandlingException(this);
+                  throw t;
+                }
+              });
       success = true;
     } finally {
       if (success == false) {
@@ -268,7 +277,7 @@ public final class Lucene99HnswVectorsReader extends KnnVectorsReader
   @Override
   public void checkIntegrity() throws IOException {
     flatVectorsReader.checkIntegrity();
-    CodecUtil.checksumEntireFile(vectorIndex);
+    CodecUtil.checksumEntireFile(vectorIndex.get());
   }
 
   @Override
@@ -402,7 +411,7 @@ public final class Lucene99HnswVectorsReader extends KnnVectorsReader
   }
 
   private HnswGraph getGraph(FieldEntry entry) throws IOException {
-    return new OffHeapHnswGraph(entry, vectorIndex);
+    return new OffHeapHnswGraph(entry, vectorIndex.get());
   }
 
   @Override

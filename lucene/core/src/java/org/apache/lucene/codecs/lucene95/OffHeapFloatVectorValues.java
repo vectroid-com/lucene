@@ -86,6 +86,7 @@ public abstract class OffHeapFloatVectorValues extends FloatVectorValues impleme
   }
 
   public static OffHeapFloatVectorValues load(
+      String fieldName,
       VectorSimilarityFunction vectorSimilarityFunction,
       FlatVectorsScorer flatVectorsScorer,
       OrdToDocDISIReaderConfiguration configuration,
@@ -98,7 +99,8 @@ public abstract class OffHeapFloatVectorValues extends FloatVectorValues impleme
     if (configuration.docsWithFieldOffset == -2 || vectorEncoding != VectorEncoding.FLOAT32) {
       return new EmptyOffHeapVectorValues(dimension, flatVectorsScorer, vectorSimilarityFunction);
     }
-    IndexInput bytesSlice = vectorData.slice("vector-data", vectorDataOffset, vectorDataLength);
+    IndexInput bytesSlice = vectorData.slice("field '" + fieldName + "' data",
+        vectorDataOffset, vectorDataLength);
     int byteSize = dimension * Float.BYTES;
     if (configuration.docsWithFieldOffset == -1) {
       return new DenseOffHeapVectorValues(

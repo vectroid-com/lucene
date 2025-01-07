@@ -104,7 +104,8 @@ public class Lucene90RWSegmentInfoFormat extends SegmentInfoFormat {
     }
   }
 
-  private SegmentInfo parseSegmentInfo(
+  @Override
+  public SegmentInfo parseSegmentInfo(
       Directory dir, DataInput input, String segment, byte[] segmentID) throws IOException {
     final Version version = Version.fromBits(input.readInt(), input.readInt(), input.readInt());
     byte hasMinVersion = input.readByte();
@@ -163,22 +164,23 @@ public class Lucene90RWSegmentInfoFormat extends SegmentInfoFormat {
     return si;
   }
 
+//  @Override
+//  public void write(Directory dir, SegmentInfo si, IOContext ioContext) throws IOException {
+//    final String fileName = IndexFileNames.segmentFileName(si.name, "", SI_EXTENSION);
+//
+//    try (IndexOutput output = dir.createOutput(fileName, ioContext)) {
+//      // Only add the file once we've successfully created it, else IFD assert can trip:
+//      si.addFile(fileName);
+//      CodecUtil.writeIndexHeader(output, CODEC_NAME, VERSION_CURRENT, si.getId(), "");
+//
+//      writeSegmentInfo(output, si);
+//
+//      CodecUtil.writeFooter(output);
+//    }
+//  }
+
   @Override
-  public void write(Directory dir, SegmentInfo si, IOContext ioContext) throws IOException {
-    final String fileName = IndexFileNames.segmentFileName(si.name, "", SI_EXTENSION);
-
-    try (IndexOutput output = dir.createOutput(fileName, ioContext)) {
-      // Only add the file once we've successfully created it, else IFD assert can trip:
-      si.addFile(fileName);
-      CodecUtil.writeIndexHeader(output, CODEC_NAME, VERSION_CURRENT, si.getId(), "");
-
-      writeSegmentInfo(output, si);
-
-      CodecUtil.writeFooter(output);
-    }
-  }
-
-  private void writeSegmentInfo(DataOutput output, SegmentInfo si) throws IOException {
+  public void writeSegmentInfo(DataOutput output, SegmentInfo si) throws IOException {
     Version version = si.getVersion();
     if (version.major < 7) {
       throw new IllegalArgumentException(

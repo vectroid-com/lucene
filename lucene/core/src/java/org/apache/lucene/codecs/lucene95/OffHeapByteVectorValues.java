@@ -92,6 +92,7 @@ public abstract class OffHeapByteVectorValues extends ByteVectorValues implement
   }
 
   public static OffHeapByteVectorValues load(
+      String fieldName,
       VectorSimilarityFunction vectorSimilarityFunction,
       FlatVectorsScorer flatVectorsScorer,
       OrdToDocDISIReaderConfiguration configuration,
@@ -104,7 +105,7 @@ public abstract class OffHeapByteVectorValues extends ByteVectorValues implement
     if (configuration.isEmpty() || vectorEncoding != VectorEncoding.BYTE) {
       return new EmptyOffHeapVectorValues(dimension, flatVectorsScorer, vectorSimilarityFunction);
     }
-    IndexInput bytesSlice = vectorData.slice("vector-data", vectorDataOffset, vectorDataLength);
+    IndexInput bytesSlice = vectorData.slice("field '" + fieldName + "' data", vectorDataOffset, vectorDataLength);
     if (configuration.isDense()) {
       return new DenseOffHeapVectorValues(
           dimension,

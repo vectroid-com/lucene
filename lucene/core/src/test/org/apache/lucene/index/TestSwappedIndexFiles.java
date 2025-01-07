@@ -86,6 +86,10 @@ public class TestSwappedIndexFiles extends LuceneTestCase {
       if (name.equals(IndexWriter.WRITE_LOCK_NAME)) {
         continue;
       }
+      // VECTROID: skip files we load lazily
+      if (name.endsWith(".fdt")) {
+        continue;
+      }
       swapOneFile(dir1, dir2, name);
     }
   }

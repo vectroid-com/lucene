@@ -83,7 +83,8 @@ final class Lucene90CompoundReader extends CompoundDirectory {
       // but for now we at least verify proper structure of the checksum footer: which looks
       // for FOOTER_MAGIC + algorithmID. This is cheap and can detect some forms of corruption
       // such as file truncation.
-      CodecUtil.retrieveChecksum(handle);
+      // VECTROID: this is costly on NFS, it triggers a GET op to the object storage.
+      //CodecUtil.retrieveChecksum(handle);
 
       // We also validate length, because e.g. if you strip 16 bytes off the .cfs we otherwise
       // would not detect it:

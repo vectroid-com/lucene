@@ -22,6 +22,7 @@ import org.apache.lucene.codecs.hnsw.FlatVectorsFormat;
 import org.apache.lucene.codecs.hnsw.FlatVectorsReader;
 import org.apache.lucene.codecs.hnsw.FlatVectorsWriter;
 import org.apache.lucene.codecs.lucene99.Lucene99FlatVectorsFormat;
+import org.apache.lucene.codecs.lucene99.Lucene99FlatVectorsWriter;
 import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.index.SegmentWriteState;
 
@@ -103,15 +104,22 @@ public class Lucene102BinaryQuantizedVectorsFormat extends FlatVectorsFormat {
   static final String VECTOR_DATA_EXTENSION = "veb";
   static final int DIRECT_MONOTONIC_BLOCK_SHIFT = 16;
 
-  private static final FlatVectorsFormat rawVectorFormat =
-      new Lucene99FlatVectorsFormat(FlatVectorScorerUtil.getLucene99FlatVectorsScorer());
+  private final FlatVectorsFormat rawVectorFormat;
 
   private static final Lucene102BinaryFlatVectorsScorer scorer =
       new Lucene102BinaryFlatVectorsScorer(FlatVectorScorerUtil.getLucene99FlatVectorsScorer());
 
   /** Creates a new instance with the default number of vectors per cluster. */
   public Lucene102BinaryQuantizedVectorsFormat() {
+    this(true);
+  }
+
+  /**
+   * @param useTemporaryVectorFile See {@link Lucene99FlatVectorsWriter#Lucene99FlatVectorsWriter}
+   */
+  public Lucene102BinaryQuantizedVectorsFormat(boolean useTemporaryVectorFile) {
     super(NAME);
+    rawVectorFormat = new Lucene99FlatVectorsFormat(FlatVectorScorerUtil.getLucene99FlatVectorsScorer(), false, useTemporaryVectorFile);
   }
 
   @Override

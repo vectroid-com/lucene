@@ -57,8 +57,10 @@ import org.apache.lucene.store.AlreadyClosedException;
 import org.apache.lucene.store.ByteArrayDataInput;
 import org.apache.lucene.store.ChecksumIndexInput;
 import org.apache.lucene.store.DataAccessHint;
+import org.apache.lucene.store.DataAccessHint;
 import org.apache.lucene.store.DataInput;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.FileTypeHint;
 import org.apache.lucene.store.FileTypeHint;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
@@ -66,6 +68,7 @@ import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.BitUtil;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.IOUtils;
+import org.apache.lucene.util.LazyResource;
 import org.apache.lucene.util.LongsRef;
 
 /**
@@ -82,7 +85,7 @@ public final class Lucene90CompressingStoredFieldsReader extends StoredFieldsRea
   private final FieldInfos fieldInfos;
   private final FieldsIndex indexReader;
   private final long maxPointer;
-  private final IndexInput fieldsStream;
+  private final LazyResource<IndexInput> fieldsStream;
   private final int chunkSize;
   private final CompressionMode compressionMode;
   private final Decompressor decompressor;
@@ -104,7 +107,7 @@ public final class Lucene90CompressingStoredFieldsReader extends StoredFieldsRea
       Lucene90CompressingStoredFieldsReader reader, boolean merging) {
     this.version = reader.version;
     this.fieldInfos = reader.fieldInfos;
-    this.fieldsStream = reader.fieldsStream.clone();
+    this.fieldsStream = new LazyResource<>(() -> reader.fieldsStream.get().clone());
     this.indexReader = reader.indexReader.clone();
     this.maxPointer = reader.maxPointer;
     this.chunkSize = reader.chunkSize;
@@ -141,15 +144,26 @@ public final class Lucene90CompressingStoredFieldsReader extends StoredFieldsRea
         IndexFileNames.segmentFileName(segment, segmentSuffix, FIELDS_EXTENSION);
     ChecksumIndexInput metaIn = null;
     try {
+      // VECTROID: our modification works for version 1, alert us when the version changes
+      assert VERSION_CURRENT == 1 && VERSION_START == 1;
+      version = 1;
       // Open the data file
-      fieldsStream =
-          d.openInput(fieldsStreamFN, context.withHints(FileTypeHint.DATA, DataAccessHint.RANDOM));
-      version =
-          CodecUtil.checkIndexHeader(
-              fieldsStream, formatName, VERSION_START, VERSION_CURRENT, si.getId(), segmentSuffix);
-      assert CodecUtil.indexHeaderLength(formatName, segmentSuffix)
-          == fieldsStream.getFilePointer();
+      fieldsStream = new LazyResource<>(() -> {
+        IndexInput fieldsStream = d.openInput(fieldsStreamFN, context.withHints(FileTypeHint.DATA, DataAccessHint.RANDOM));
+        CodecUtil.checkIndexHeader(
+                fieldsStream, formatName, VERSION_START, VERSION_CURRENT, si.getId(), segmentSuffix);
+        assert CodecUtil.indexHeaderLength(formatName, segmentSuffix)
+            == fieldsStream.getFilePointer();
 
+        // NOTE: data file is too costly to verify checksum against all the bytes on open,
+        // but for now we at least verify proper structure of the checksum footer: which looks
+        // for FOOTER_MAGIC + algorithmID. This is cheap and can detect some forms of corruption
+        // such as file truncation.
+        // VECTROID: disable checking of the footer. This becomes much more expensive with remote FS
+//        CodecUtil.retrieveChecksum(fieldsStream);
+
+        return fieldsStream;
+      });
       final String metaStreamFN =
           IndexFileNames.segmentFileName(segment, segmentSuffix, META_EXTENSION);
       metaIn = d.openChecksumInput(metaStreamFN);
@@ -168,12 +182,6 @@ public final class Lucene90CompressingStoredFieldsReader extends StoredFieldsRea
       Arrays.fill(prefetchedBlockIDCache, -1);
       this.merging = false;
       this.state = new BlockState();
-
-      // NOTE: data file is too costly to verify checksum against all the bytes on open,
-      // but for now we at least verify proper structure of the checksum footer: which looks
-      // for FOOTER_MAGIC + algorithmID. This is cheap and can detect some forms of corruption
-      // such as file truncation.
-      CodecUtil.retrieveChecksum(fieldsStream);
 
       long maxPointer = -1;
       FieldsIndex indexReader = null;
@@ -460,6 +468,7 @@ public final class Lucene90CompressingStoredFieldsReader extends StoredFieldsRea
     }
 
     private void doReset(int docID) throws IOException {
+      IndexInput fieldsStream = Lucene90CompressingStoredFieldsReader.this.fieldsStream.get();
       docBase = fieldsStream.readVInt();
       final int token = fieldsStream.readVInt();
       chunkDocs = token >>> 2;
@@ -553,6 +562,8 @@ public final class Lucene90CompressingStoredFieldsReader extends StoredFieldsRea
         bytes = new BytesRef();
       }
 
+      IndexInput fieldsStream = Lucene90CompressingStoredFieldsReader.this.fieldsStream.get();
+
       final DataInput documentInput;
       if (length == 0) {
         // empty
@@ -637,14 +648,14 @@ public final class Lucene90CompressingStoredFieldsReader extends StoredFieldsRea
 
     final long blockStartPointer = indexReader.getBlockStartPointer(blockID);
     final long blockLength = indexReader.getBlockLength(blockID);
-    fieldsStream.prefetch(blockStartPointer, blockLength);
+    fieldsStream.get().prefetch(blockStartPointer, blockLength);
 
     prefetchedBlockIDCache[prefetchedBlockIDCacheIndex++ & PREFETCH_CACHE_MASK] = blockID;
   }
 
   SerializedDocument serializedDocument(int docID) throws IOException {
     if (state.contains(docID) == false) {
-      fieldsStream.seek(indexReader.getStartPointer(docID));
+      fieldsStream.get().seek(indexReader.getStartPointer(docID));
       state.reset(docID);
     }
     assert state.contains(docID);
@@ -722,7 +733,7 @@ public final class Lucene90CompressingStoredFieldsReader extends StoredFieldsRea
   }
 
   IndexInput getFieldsStream() {
-    return fieldsStream;
+    return fieldsStream.get();
   }
 
   int getChunkSize() {
@@ -763,7 +774,7 @@ public final class Lucene90CompressingStoredFieldsReader extends StoredFieldsRea
   @Override
   public void checkIntegrity() throws IOException {
     indexReader.checkIntegrity();
-    CodecUtil.checksumEntireFile(fieldsStream);
+    CodecUtil.checksumEntireFile(fieldsStream.get());
   }
 
   @Override

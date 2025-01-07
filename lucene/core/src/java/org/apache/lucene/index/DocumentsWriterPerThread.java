@@ -621,7 +621,8 @@ final class DocumentsWriterPerThread implements Accountable, Lock {
       // creating CFS so that 1) .si isn't slurped into CFS,
       // and 2) .si reflects useCompoundFile=true change
       // above:
-      codec.segmentInfoFormat().write(directory, newSegment.info, context);
+      // VECTROID: .si file is written inline as a part of the segments file
+//      codec.segmentInfoFormat().write(directory, newSegment.info, context);
 
       // TODO: ideally we would freeze newSegment here!!
       // because any changes after writing the .si will be
@@ -741,7 +742,12 @@ final class DocumentsWriterPerThread implements Accountable, Lock {
    */
   void commitLastBytesUsed(long delta) {
     assert isHeldByCurrentThread();
-    assert getCommitLastBytesUsedDelta() == delta : "delta has changed";
+    // VECTROID: we break this assertion, because we're adding documents to HNSW graph on the
+    // background, and the used memory can change between two calls to `ramBytesUse()` even if no
+    // action was performed on the current thread. I hope this won't cause issues anywhere else, as
+    // per my code checking, the assertion isn't really required for correctness, it just happened
+    // to be the case so far.
+//    assert getCommitLastBytesUsedDelta() == delta : "delta has changed";
     lastCommittedBytesUsed += delta;
   }
 

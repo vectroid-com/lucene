@@ -22,7 +22,7 @@ import java.util.Optional;
 import org.apache.lucene.util.Constants;
 
 @SuppressWarnings("preview")
-abstract class NativeAccess {
+public abstract class NativeAccess {
 
   /** Invoke the {@code madvise} call for the given {@link MemorySegment}. */
   public abstract void madvise(MemorySegment segment, ReadAdvice readAdvice) throws IOException;
