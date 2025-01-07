@@ -157,7 +157,7 @@ public class HnswGraphBuilder implements HnswBuilder {
    *     to ensure repeatable construction.
    * @param hnsw the graph to build, can be previously initialized
    */
-  protected HnswGraphBuilder(
+  public HnswGraphBuilder(
       RandomVectorScorerSupplier scorerSupplier,
       int M,
       int beamWidth,

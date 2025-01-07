@@ -78,7 +78,10 @@ public class TestAllFilesCheckIndexHeader extends LuceneTestCase {
 
   private void checkIndexHeader(Directory dir) throws IOException {
     for (String name : dir.listAll()) {
-      if (name.equals(IndexWriter.WRITE_LOCK_NAME) == false) {
+      // VECTROID: we added lazy opening for some files, so exception isn't thrown when opening the index,
+      // but when the file is needed
+      boolean isFileWithLazyLoading = name.endsWith(".fdt");
+      if (name.equals(IndexWriter.WRITE_LOCK_NAME) == false && !isFileWithLazyLoading) {
         checkOneFile(dir, name);
       }
     }

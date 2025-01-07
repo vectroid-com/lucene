@@ -111,6 +111,13 @@ public class TestAllFilesDetectTruncation extends LuceneTestCase {
   private void checkTruncation(Directory dir) throws IOException {
     for (String name : dir.listAll()) {
       if (name.equals(IndexWriter.WRITE_LOCK_NAME) == false) {
+        // VECTROID: skip files we load lazily
+        if (name.endsWith(".fdt")
+            || name.endsWith(".vex")
+            || name.endsWith(".veq")
+            || name.endsWith(".vec")) {
+          continue;
+        }
         truncateOneFile(dir, name);
       }
     }

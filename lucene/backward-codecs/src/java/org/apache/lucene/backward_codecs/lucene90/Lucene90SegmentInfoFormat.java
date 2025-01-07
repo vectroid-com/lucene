@@ -113,7 +113,8 @@ public class Lucene90SegmentInfoFormat extends SegmentInfoFormat {
     }
   }
 
-  private SegmentInfo parseSegmentInfo(
+  @Override
+  public SegmentInfo parseSegmentInfo(
       Directory dir, DataInput input, String segment, byte[] segmentID) throws IOException {
     final Version version = Version.fromBits(input.readInt(), input.readInt(), input.readInt());
     byte hasMinVersion = input.readByte();
@@ -173,7 +174,7 @@ public class Lucene90SegmentInfoFormat extends SegmentInfoFormat {
   }
 
   @Override
-  public void write(Directory dir, SegmentInfo si, IOContext ioContext) throws IOException {
+  public void writeSegmentInfo(DataOutput output, SegmentInfo si) throws IOException {
     throw new UnsupportedOperationException("Old formats can't be used for writing");
   }
 }

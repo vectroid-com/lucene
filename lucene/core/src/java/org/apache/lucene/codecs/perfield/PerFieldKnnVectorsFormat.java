@@ -179,7 +179,7 @@ public abstract class PerFieldKnnVectorsFormat extends KnnVectorsFormat {
     }
 
     @Override
-    public long ramBytesUsed() {
+    public long ramBytesUsedNonHard() {
       long total = 0;
       for (WriterAndSuffix was : formats.values()) {
         total += was.writer.ramBytesUsed();

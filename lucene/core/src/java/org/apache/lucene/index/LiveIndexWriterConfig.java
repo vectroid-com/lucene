@@ -116,6 +116,9 @@ public class LiveIndexWriterConfig {
   /** The IndexWriter event listener to record key events * */
   protected IndexWriterEventListener eventListener;
 
+  /** VECTROID, see {@link IndexWriterConfig#setUsePendingSegments}. */
+  protected volatile boolean usePendingSegments;
+
   // used by IndexWriterConfig
   LiveIndexWriterConfig(Analyzer analyzer) {
     this.analyzer = analyzer;
@@ -139,6 +142,7 @@ public class LiveIndexWriterConfig {
     perThreadHardLimitMB = IndexWriterConfig.DEFAULT_RAM_PER_THREAD_HARD_LIMIT_MB;
     maxFullFlushMergeWaitMillis = IndexWriterConfig.DEFAULT_MAX_FULL_FLUSH_MERGE_WAIT_MILLIS;
     eventListener = IndexWriterEventListener.NO_OP_LISTENER;
+    usePendingSegments = true;
   }
 
   /** Returns the default analyzer to use for indexing documents. */
@@ -466,6 +470,14 @@ public class LiveIndexWriterConfig {
     return parentField;
   }
 
+  /**
+   * VECTROID. Returns true if the index writer should use {@code pending_segments_N} temporary
+   * file, see {@link IndexWriterConfig#setUsePendingSegments(boolean)}.
+   */
+  public boolean getUsePendingSegments() {
+    return usePendingSegments;
+  }
+
   @Override
   public String toString() {
     StringBuilder sb = new StringBuilder();
@@ -495,6 +507,7 @@ public class LiveIndexWriterConfig {
     sb.append("leafSorter=").append(getLeafSorter()).append("\n");
     sb.append("eventListener=").append(getIndexWriterEventListener()).append("\n");
     sb.append("parentField=").append(getParentField()).append("\n");
+    sb.append("usePendingSegments=").append(getUsePendingSegments()).append("\n");
     return sb.toString();
   }
 }

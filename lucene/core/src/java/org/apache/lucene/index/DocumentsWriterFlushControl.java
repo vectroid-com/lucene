@@ -234,7 +234,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
           activeBytes += delta;
           assert updatePeaks(delta);
           flushPolicy.onChange(this, perThread);
-          if (!perThread.isFlushPending() && perThread.ramBytesUsed() > hardMaxBytesPerDWPT) {
+          if (!perThread.isFlushPending() && perThread.ramBytesUsedHard() > hardMaxBytesPerDWPT) {
             // Safety check to prevent a single DWPT exceeding its RAM limit. This
             // is super important since we can not address more than 2048 MB per DWPT
             setFlushPending(perThread);

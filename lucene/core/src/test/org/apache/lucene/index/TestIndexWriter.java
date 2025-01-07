@@ -1272,7 +1272,7 @@ public class TestIndexWriter extends LuceneTestCase {
 
       assertTrue(Files.exists(indexPath.resolve("_0.cfs")));
       assertTrue(Files.exists(indexPath.resolve("_0.cfe")));
-      assertTrue(Files.exists(indexPath.resolve("_0.si")));
+//      assertTrue(Files.exists(indexPath.resolve("_0.si")));
       if (iter == 1) {
         // we run a full commit so there should be a segments file etc.
         assertTrue(Files.exists(indexPath.resolve("segments_1")));

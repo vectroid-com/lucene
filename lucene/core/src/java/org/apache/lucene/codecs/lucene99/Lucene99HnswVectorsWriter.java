@@ -17,6 +17,7 @@
 
 package org.apache.lucene.codecs.lucene99;
 
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static org.apache.lucene.codecs.KnnVectorsWriter.MergedVectorValues.hasVectorValues;
 import static org.apache.lucene.codecs.lucene99.Lucene99HnswVectorsFormat.DIRECT_MONOTONIC_BLOCK_SHIFT;
 import static org.apache.lucene.codecs.lucene99.Lucene99HnswVectorsFormat.HNSW_GRAPH_THRESHOLD;
@@ -25,11 +26,14 @@ import static org.apache.lucene.codecs.lucene99.Lucene99HnswVectorsFormat.VERSIO
 import static org.apache.lucene.codecs.lucene99.Lucene99HnswVectorsReader.SIMILARITY_FUNCTIONS;
 import static org.apache.lucene.util.hnsw.HnswGraphSearcher.expectedVisitedNodes;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Supplier;
+import java.util.stream.Stream;
 import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.codecs.KnnFieldVectorsWriter;
 import org.apache.lucene.codecs.KnnVectorsWriter;
@@ -48,17 +52,22 @@ import org.apache.lucene.index.Sorter;
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.search.TaskExecutor;
 import org.apache.lucene.store.IndexOutput;
+import org.apache.lucene.util.FixedBitSet;
+import org.apache.lucene.vectroid.SmallTaskWithResourcesExecutor;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.InfoStream;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.apache.lucene.util.hnsw.CloseableRandomVectorScorerSupplier;
 import org.apache.lucene.util.hnsw.ConcurrentHnswMerger;
+import org.apache.lucene.util.hnsw.HnswConcurrentMergeBuilder;
 import org.apache.lucene.util.hnsw.HnswGraph;
 import org.apache.lucene.util.hnsw.HnswGraph.NodesIterator;
 import org.apache.lucene.util.hnsw.HnswGraphBuilder;
 import org.apache.lucene.util.hnsw.HnswGraphMerger;
+import org.apache.lucene.util.hnsw.HnswLock;
 import org.apache.lucene.util.hnsw.IncrementalHnswGraphMerger;
 import org.apache.lucene.util.hnsw.NeighborArray;
+import org.apache.lucene.util.hnsw.NeighborQueue;
 import org.apache.lucene.util.hnsw.OnHeapHnswGraph;
 import org.apache.lucene.util.hnsw.RandomVectorScorerSupplier;
 import org.apache.lucene.util.packed.DirectMonotonicWriter;
@@ -77,7 +86,7 @@ public final class Lucene99HnswVectorsWriter extends KnnVectorsWriter {
   private final int M;
   private final int beamWidth;
   private final FlatVectorsWriter flatVectorWriter;
-  private final int numMergeWorkers;
+  private final int numHnswThreads;
   private final TaskExecutor mergeExec;
   private final int tinySegmentsThreshold;
   private final int version;
@@ -90,18 +99,10 @@ public final class Lucene99HnswVectorsWriter extends KnnVectorsWriter {
       int M,
       int beamWidth,
       FlatVectorsWriter flatVectorWriter,
-      int numMergeWorkers,
+      int numHnswThreads,
       TaskExecutor mergeExec)
       throws IOException {
-    this(
-        state,
-        M,
-        beamWidth,
-        flatVectorWriter,
-        numMergeWorkers,
-        mergeExec,
-        HNSW_GRAPH_THRESHOLD,
-        VERSION_CURRENT);
+    this(state, M, beamWidth, flatVectorWriter, numHnswThreads, mergeExec, HNSW_GRAPH_THRESHOLD, VERSION_CURRENT);
   }
 
   public Lucene99HnswVectorsWriter(
@@ -109,19 +110,11 @@ public final class Lucene99HnswVectorsWriter extends KnnVectorsWriter {
       int M,
       int beamWidth,
       FlatVectorsWriter flatVectorWriter,
-      int numMergeWorkers,
+      int numHnswThreads,
       TaskExecutor mergeExec,
       int tinySegmentsThreshold)
       throws IOException {
-    this(
-        state,
-        M,
-        beamWidth,
-        flatVectorWriter,
-        numMergeWorkers,
-        mergeExec,
-        tinySegmentsThreshold,
-        VERSION_CURRENT);
+    this(state, M, beamWidth, flatVectorWriter, numHnswThreads, mergeExec, tinySegmentsThreshold, VERSION_CURRENT);
   }
 
   Lucene99HnswVectorsWriter(
@@ -129,7 +122,7 @@ public final class Lucene99HnswVectorsWriter extends KnnVectorsWriter {
       int M,
       int beamWidth,
       FlatVectorsWriter flatVectorWriter,
-      int numMergeWorkers,
+      int numHnswThreads,
       TaskExecutor mergeExec,
       int tinySegmentsThreshold,
       int version)
@@ -137,7 +130,7 @@ public final class Lucene99HnswVectorsWriter extends KnnVectorsWriter {
     this.M = M;
     this.flatVectorWriter = flatVectorWriter;
     this.beamWidth = beamWidth;
-    this.numMergeWorkers = numMergeWorkers;
+    this.numHnswThreads = numHnswThreads;
     this.mergeExec = mergeExec;
     this.tinySegmentsThreshold = tinySegmentsThreshold;
     this.version = version;
@@ -188,7 +181,8 @@ public final class Lucene99HnswVectorsWriter extends KnnVectorsWriter {
             M,
             beamWidth,
             segmentWriteState.infoStream,
-            tinySegmentsThreshold);
+            tinySegmentsThreshold,
+            numHnswThreads);
     fields.add(newField);
     return newField;
   }
@@ -224,7 +218,7 @@ public final class Lucene99HnswVectorsWriter extends KnnVectorsWriter {
   }
 
   @Override
-  public long ramBytesUsed() {
+  public long ramBytesUsedNonHard() {
     long total = SHALLOW_RAM_BYTES_USED;
     for (FieldWriter<?> field : fields) {
       // the field tracks the delegate field usage
@@ -429,7 +423,7 @@ public final class Lucene99HnswVectorsWriter extends KnnVectorsWriter {
                 mergeState.intraMergeTaskExecutor == null
                     ? null
                     : new TaskExecutor(mergeState.intraMergeTaskExecutor),
-                numMergeWorkers);
+                numHnswThreads);
         for (int i = 0; i < mergeState.liveDocs.length; i++) {
           if (hasVectorValues(mergeState.fieldInfos[i], fieldInfo.name)) {
             merger.addReader(
@@ -590,7 +584,7 @@ public final class Lucene99HnswVectorsWriter extends KnnVectorsWriter {
       int numParallelMergeWorkers) {
     if (mergeExec != null) {
       return new ConcurrentHnswMerger(
-          fieldInfo, scorerSupplier, M, beamWidth, mergeExec, numMergeWorkers);
+          fieldInfo, scorerSupplier, M, beamWidth, mergeExec, numHnswThreads);
     }
     if (parallelMergeTaskExecutor != null && numParallelMergeWorkers > 1) {
       return new ConcurrentHnswMerger(
@@ -606,7 +600,7 @@ public final class Lucene99HnswVectorsWriter extends KnnVectorsWriter {
 
   @Override
   public void close() throws IOException {
-    IOUtils.close(meta, vectorIndex, flatVectorWriter);
+    IOUtils.close(Stream.concat(Stream.of(meta, vectorIndex, flatVectorWriter), fields.stream()).toList());
   }
 
   static int distFuncToOrd(VectorSimilarityFunction func) {
@@ -626,13 +620,13 @@ public final class Lucene99HnswVectorsWriter extends KnnVectorsWriter {
     return numNodes > expectedVisitedNodes && expectedVisitedNodes > 0;
   }
 
-  private static class FieldWriter<T> extends KnnFieldVectorsWriter<T> {
+  private static class FieldWriter<T> extends KnnFieldVectorsWriter<T> implements Closeable {
 
     private static final long SHALLOW_SIZE =
         RamUsageEstimator.shallowSizeOfInstance(FieldWriter.class);
 
     private final FieldInfo fieldInfo;
-    private HnswGraphBuilder hnswGraphBuilder; // only created when needed
+    private List<HnswGraphBuilder> hnswGraphBuilders;  // only created when needed
     private int lastDocID = -1;
     private int node = 0;
     private final FlatFieldVectorsWriter<T> flatFieldVectorsWriter;
@@ -642,6 +636,12 @@ public final class Lucene99HnswVectorsWriter extends KnnVectorsWriter {
     private final InfoStream infoStream;
     private final RandomVectorScorerSupplier scorerSupplier;
 
+    // VECTROID: new fields
+    private OnHeapHnswGraph hnswGraph;
+    private HnswLock sharedLock;
+    private SmallTaskWithResourcesExecutor<HnswGraphBuilder> executor;
+    private final int numHnswThreads;
+
     @SuppressWarnings("unchecked")
     static FieldWriter<?> create(
         FlatVectorsScorer scorer,
@@ -650,7 +650,8 @@ public final class Lucene99HnswVectorsWriter extends KnnVectorsWriter {
         int M,
         int beamWidth,
         InfoStream infoStream,
-        int tinySegmentsThreshold)
+        int tinySegmentsThreshold,
+        int numHnswThreads)
         throws IOException {
       return switch (fieldInfo.getVectorEncoding()) {
         case BYTE ->
@@ -661,7 +662,8 @@ public final class Lucene99HnswVectorsWriter extends KnnVectorsWriter {
                 M,
                 beamWidth,
                 infoStream,
-                tinySegmentsThreshold);
+                tinySegmentsThreshold,
+                numHnswThreads);
         case FLOAT32 ->
             new FieldWriter<>(
                 scorer,
@@ -670,7 +672,8 @@ public final class Lucene99HnswVectorsWriter extends KnnVectorsWriter {
                 M,
                 beamWidth,
                 infoStream,
-                tinySegmentsThreshold);
+                tinySegmentsThreshold,
+                numHnswThreads);
       };
     }
 
@@ -682,12 +685,14 @@ public final class Lucene99HnswVectorsWriter extends KnnVectorsWriter {
         int M,
         int beamWidth,
         InfoStream infoStream,
-        int tinySegmentsThreshold)
+        int tinySegmentsThreshold,
+        int numHnswThreads)
         throws IOException {
       this.fieldInfo = fieldInfo;
       this.M = M;
       this.beamWidth = beamWidth;
       this.infoStream = infoStream;
+      this.numHnswThreads = numHnswThreads;
       this.flatFieldVectorsWriter = Objects.requireNonNull(flatFieldVectorsWriter);
       this.graphThreshold = tinySegmentsThreshold;
       this.scorerSupplier =
@@ -705,7 +710,6 @@ public final class Lucene99HnswVectorsWriter extends KnnVectorsWriter {
                         (List<float[]>) flatFieldVectorsWriter.getVectors(),
                         fieldInfo.getVectorDimension()));
           };
-
       if (graphThreshold <= 0) {
         // Initialize graph builder if optimization is disabled
         initializeGraphBuilder();
@@ -713,17 +717,65 @@ public final class Lucene99HnswVectorsWriter extends KnnVectorsWriter {
     }
 
     private void initializeGraphBuilder() throws IOException {
-      if (hnswGraphBuilder != null) {
+      if (hnswGraphBuilders != null) {
         return;
       }
-      this.hnswGraphBuilder =
-          HnswGraphBuilder.create(scorerSupplier, M, beamWidth, HnswGraphBuilder.randSeed);
-      this.hnswGraphBuilder.setInfoStream(infoStream);
+      hnswGraph = new OnHeapHnswGraph(M, -1); // TODO pre-create with size when merging?
+      sharedLock = numHnswThreads > 1 ? new HnswLock() : null;
+
+      Supplier<HnswGraphBuilder> hnswGraphBuilderFactory = () -> {
+        try {
+          HnswGraphBuilder hnswGraphBuilder;
+          if (numHnswThreads > 1) {
+            hnswGraphBuilder =
+                new HnswGraphBuilder(
+                    scorerSupplier.copy(),
+                    M,
+                    beamWidth,
+                    HnswGraphBuilder.randSeed,
+                    hnswGraph,
+                    sharedLock,
+                    new HnswConcurrentMergeBuilder.MergeSearcher(
+                        new NeighborQueue(beamWidth, true),
+                        sharedLock,
+                        new FixedBitSet(hnswGraph.maxNodeId() + 1)));
+          } else {
+            hnswGraphBuilder =
+                HnswGraphBuilder.create(
+                    scorerSupplier, M, beamWidth, HnswGraphBuilder.randSeed, -1);
+          }
+          hnswGraphBuilder.setInfoStream(infoStream);
+          return hnswGraphBuilder;
+        } catch (IOException e) {
+          throw new RuntimeException(e);
+        }
+      };
+
+      if (numHnswThreads > 1) {
+        this.hnswGraphBuilders = new ArrayList<>();
+      } else {
+        this.hnswGraphBuilders = List.of(hnswGraphBuilderFactory.get());
+      }
+
+      int queuePerWorker = (256 << 10) / fieldInfo.getVectorDimension();
+      this.executor = numHnswThreads > 1
+          ? new SmallTaskWithResourcesExecutor<>(numHnswThreads, queuePerWorker, MILLISECONDS.toNanos(10), "hnsw-builder-",
+          () -> {
+            HnswGraphBuilder builder = hnswGraphBuilderFactory.get();
+            hnswGraphBuilders.add(builder);
+            return builder;
+          })
+          : null;
     }
 
     private void replayBufferedVectors() throws IOException {
       for (int i = 0; i < flatFieldVectorsWriter.getVectors().size(); i++) {
-        hnswGraphBuilder.addGraphNode(i);
+        if (executor != null) {
+          int nodeLocal = i; // capture current value of `node`
+          executor.submit(res -> res.addGraphNode(nodeLocal));
+        } else {
+          hnswGraphBuilders.getFirst().addGraphNode(i);
+        }
       }
     }
 
@@ -737,12 +789,17 @@ public final class Lucene99HnswVectorsWriter extends KnnVectorsWriter {
       }
       flatFieldVectorsWriter.addValue(docID, vectorValue);
       // Check if we need to initialize graph builder for tiny segment optimization
-      if (hnswGraphBuilder == null && shouldCreateGraph(graphThreshold, node + 1)) {
+      if (hnswGraphBuilders == null && shouldCreateGraph(graphThreshold, node + 1)) {
         initializeGraphBuilder();
         replayBufferedVectors();
-      } else if (hnswGraphBuilder != null) {
+      } else if (hnswGraphBuilders != null) {
         // Graph builder is active, add to graph
-        hnswGraphBuilder.addGraphNode(node);
+        if (executor != null) {
+          int nodeLocal = node; // capture current value of `node`
+          executor.submit(res -> res.addGraphNode(nodeLocal));
+        } else {
+          hnswGraphBuilders.getFirst().addGraphNode(node);
+        }
       }
       node++;
       lastDocID = docID;
@@ -759,8 +816,11 @@ public final class Lucene99HnswVectorsWriter extends KnnVectorsWriter {
 
     OnHeapHnswGraph getGraph() throws IOException {
       assert flatFieldVectorsWriter.isFinished();
-      if (hnswGraphBuilder != null && node > 0) {
-        return hnswGraphBuilder.getCompletedGraph();
+      if (hnswGraphBuilders != null && node > 0) {
+        if (executor != null) {
+          executor.shutdownAndWait();
+        }
+        return hnswGraphBuilders.getFirst().getCompletedGraph();
       } else {
         // No graph
         return null;
@@ -770,10 +830,15 @@ public final class Lucene99HnswVectorsWriter extends KnnVectorsWriter {
     @Override
     public long ramBytesUsed() {
       long total = SHALLOW_SIZE + flatFieldVectorsWriter.ramBytesUsed();
-      if (hnswGraphBuilder != null) {
-        total += hnswGraphBuilder.getGraph().ramBytesUsed();
+      if (hnswGraphBuilders != null) {
+        total += hnswGraph.ramBytesUsed();
       }
       return total;
+    }
+
+    @Override
+    public void close() throws IOException {
+      IOUtils.close(executor);
     }
   }
 }

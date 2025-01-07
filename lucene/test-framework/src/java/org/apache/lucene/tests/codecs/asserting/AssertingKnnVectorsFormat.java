@@ -100,7 +100,7 @@ public class AssertingKnnVectorsFormat extends KnnVectorsFormat {
     }
 
     @Override
-    public long ramBytesUsed() {
+    public long ramBytesUsedNonHard() {
       return delegate.ramBytesUsed();
     }
   }

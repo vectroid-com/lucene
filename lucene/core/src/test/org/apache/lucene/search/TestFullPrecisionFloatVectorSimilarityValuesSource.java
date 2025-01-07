@@ -79,7 +79,8 @@ public class TestFullPrecisionFloatVectorSimilarityValuesSource extends LuceneTe
         Lucene99HnswVectorsFormat.DEFAULT_MAX_CONN,
         Lucene99HnswVectorsFormat.DEFAULT_BEAM_WIDTH,
         1,
-        null);
+        null,
+        true);
   }
 
   // TODO: incredibly slow

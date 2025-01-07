@@ -39,7 +39,7 @@ import org.apache.lucene.util.IOConsumer;
  * chunkSizePower</code>).
  */
 @SuppressWarnings("preview")
-abstract class MemorySegmentIndexInput extends IndexInput implements MemorySegmentAccessInput {
+public abstract class MemorySegmentIndexInput extends IndexInput implements MemorySegmentAccessInput {
   static final ValueLayout.OfByte LAYOUT_BYTE = ValueLayout.JAVA_BYTE;
   static final ValueLayout.OfShort LAYOUT_LE_SHORT =
       ValueLayout.JAVA_SHORT_UNALIGNED.withOrder(ByteOrder.LITTLE_ENDIAN);
@@ -56,7 +56,7 @@ abstract class MemorySegmentIndexInput extends IndexInput implements MemorySegme
   final int chunkSizePower;
   final boolean confined;
   final Arena arena;
-  final MemorySegment[] segments;
+  public final MemorySegment[] segments;
   final Function<IOContext, ReadAdvice> toReadAdvice;
   final AtomicInteger sharedPrefetchCounter;
 
@@ -73,7 +73,13 @@ abstract class MemorySegmentIndexInput extends IndexInput implements MemorySegme
       int chunkSizePower,
       boolean confined,
       Function<IOContext, ReadAdvice> toReadAdvice) {
-    assert Arrays.stream(segments).map(MemorySegment::scope).allMatch(arena.scope()::equals);
+    // VECTROID: we use this class for slices where we don't want to close the Arena. If `arena` is non-null, it's
+    // closed. This assertion is also silly, normally all `segments` are allocated from the given `arena`, but we can't
+    // check that, it checks the scope, but that's not really reliable, even if segments are from another arena.
+//    assert Arrays.stream(segments).map(MemorySegment::scope).allMatch(arena.scope()::equals);
+    // VECTROID: this class doesn't support non-mapped segments correctly, let's add this check to make sure we
+    // don't make a mistake in the future.
+    assert Arrays.stream(segments).allMatch(MemorySegment::isMapped);
     AtomicInteger sharedPrefetchCounter = new AtomicInteger();
     if (segments.length == 1) {
       return new SingleSegmentImpl(

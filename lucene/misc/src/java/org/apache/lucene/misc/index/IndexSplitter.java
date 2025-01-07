@@ -103,7 +103,7 @@ public class IndexSplitter {
       infos.remove(info);
     }
     infos.changed();
-    infos.commit(fsDir);
+    infos.commit(fsDir, true);
   }
 
   public void split(Path destDir, String[] segs) throws IOException {
@@ -147,7 +147,7 @@ public class IndexSplitter {
       }
     }
     destInfos.changed();
-    destInfos.commit(destFSDir);
+    destInfos.commit(destFSDir, true);
     // System.out.println("destDir:"+destDir.getAbsolutePath());
   }
 }

@@ -24,11 +24,11 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  * Provide (read-and-write) striped locks for access to nodes of an {@link OnHeapHnswGraph}. For use
  * by {@link HnswConcurrentMergeBuilder} and its HnswGraphBuilders.
  */
-final class HnswLock {
+public final class HnswLock {
   private static final int NUM_LOCKS = 512;
   private final ReentrantReadWriteLock[] locks;
 
-  HnswLock() {
+  public HnswLock() {
     locks = new ReentrantReadWriteLock[NUM_LOCKS];
     for (int i = 0; i < NUM_LOCKS; i++) {
       locks[i] = new ReentrantReadWriteLock();

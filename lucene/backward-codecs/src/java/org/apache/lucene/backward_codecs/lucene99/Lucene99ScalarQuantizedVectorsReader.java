@@ -46,6 +46,7 @@ import org.apache.lucene.store.FileTypeHint;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.IOUtils;
+import org.apache.lucene.util.LazyResource;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.apache.lucene.util.hnsw.RandomVectorScorer;
 import org.apache.lucene.util.quantization.QuantizedByteVectorValues;
@@ -64,7 +65,7 @@ public final class Lucene99ScalarQuantizedVectorsReader extends FlatVectorsReade
       RamUsageEstimator.shallowSizeOfInstance(Lucene99ScalarQuantizedVectorsReader.class);
 
   private final IntObjectHashMap<FieldEntry> fields = new IntObjectHashMap<>();
-  private final IndexInput quantizedVectorData;
+  private final LazyResource<IndexInput> quantizedVectorData;
   private final FlatVectorsReader rawVectorsReader;
   private final FieldInfos fieldInfos;
 
@@ -99,16 +100,25 @@ public final class Lucene99ScalarQuantizedVectorsReader extends FlatVectorsReade
       } finally {
         CodecUtil.checkFooter(meta, priorE);
       }
+      int finalVersionMeta = versionMeta;
       quantizedVectorData =
-          openDataInput(
-              state,
-              versionMeta,
-              Lucene99ScalarQuantizedVectorsFormat.VECTOR_DATA_EXTENSION,
-              Lucene99ScalarQuantizedVectorsFormat.VECTOR_DATA_CODEC_NAME,
-              // Quantized vectors are accessed randomly from their node ID stored in the HNSW
-              // graph.
-              state.context.withHints(
-                  FileTypeHint.DATA, FileDataHint.KNN_VECTORS, DataAccessHint.RANDOM));
+          new LazyResource<>(
+              () -> {
+                try {
+                  return openDataInput(
+                      state,
+                      finalVersionMeta,
+                      Lucene99ScalarQuantizedVectorsFormat.VECTOR_DATA_EXTENSION,
+                      Lucene99ScalarQuantizedVectorsFormat.VECTOR_DATA_CODEC_NAME,
+                      // Quantized vectors are accessed randomly from their node ID stored in the HNSW
+                      // graph.
+                      state.context.withHints(
+                          FileTypeHint.DATA, FileDataHint.KNN_VECTORS, DataAccessHint.RANDOM));
+                } catch (Throwable t) {
+                  IOUtils.closeWhileHandlingException(this);
+                  throw t;
+                }
+              });
       success = true;
     } finally {
       if (success == false) {
@@ -168,7 +178,8 @@ public final class Lucene99ScalarQuantizedVectorsReader extends FlatVectorsReade
   @Override
   public void checkIntegrity() throws IOException {
     rawVectorsReader.checkIntegrity();
-    CodecUtil.checksumEntireFile(quantizedVectorData);
+    // VECTROID: ignore checksum verification. This causes that the input file is read twice.
+//    CodecUtil.checksumEntireFile(quantizedVectorData.get());
   }
 
   private FieldEntry getFieldEntry(String field) {
@@ -204,7 +215,7 @@ public final class Lucene99ScalarQuantizedVectorsReader extends FlatVectorsReade
           fieldEntry.compress,
           fieldEntry.vectorDataOffset,
           fieldEntry.vectorDataLength,
-          quantizedVectorData);
+          quantizedVectorData.get());
     }
 
     OffHeapQuantizedByteVectorValues quantizedByteVectorValues =
@@ -218,7 +229,7 @@ public final class Lucene99ScalarQuantizedVectorsReader extends FlatVectorsReade
             fieldEntry.compress,
             fieldEntry.vectorDataOffset,
             fieldEntry.vectorDataLength,
-            quantizedVectorData);
+            quantizedVectorData.get());
     return new QuantizedVectorValues(rawVectorValues, quantizedByteVectorValues);
   }
 
@@ -257,7 +268,8 @@ public final class Lucene99ScalarQuantizedVectorsReader extends FlatVectorsReade
                 + versionVectorData,
             in);
       }
-      CodecUtil.retrieveChecksum(in);
+      // VECTROID: ignore checksum verification. This causes that the input file is read twice.
+//      CodecUtil.retrieveChecksum(in);
       success = true;
       return in;
     } finally {
@@ -284,7 +296,7 @@ public final class Lucene99ScalarQuantizedVectorsReader extends FlatVectorsReade
             fieldEntry.compress,
             fieldEntry.vectorDataOffset,
             fieldEntry.vectorDataLength,
-            quantizedVectorData);
+            quantizedVectorData.get());
     return vectorScorer.getRandomVectorScorer(fieldEntry.similarityFunction, vectorValues, target);
   }
 
@@ -345,7 +357,7 @@ public final class Lucene99ScalarQuantizedVectorsReader extends FlatVectorsReade
         fieldEntry.compress,
         fieldEntry.vectorDataOffset,
         fieldEntry.vectorDataLength,
-        quantizedVectorData);
+        quantizedVectorData.get());
   }
 
   @Override

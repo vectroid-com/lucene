@@ -40,11 +40,11 @@ public class LockVerifyServer {
   public static final int START_GUN_SIGNAL = 43;
 
   // method pkg-private for tests
-  static void run(String hostname, int maxClients, Consumer<InetSocketAddress> startClients)
+  static void run(String hostname, int port, int maxClients, Consumer<InetSocketAddress> startClients)
       throws Exception {
     try (final ServerSocket s = new ServerSocket()) {
       s.setSoTimeout(30000); // give clients at most 30 secs to connect and send bytes
-      s.bind(new InetSocketAddress(hostname, 0));
+      s.bind(new InetSocketAddress(hostname, port));
       final InetSocketAddress localAddr = (InetSocketAddress) s.getLocalSocketAddress();
       System.out.println("Listening on " + localAddr + "...");
 
@@ -145,11 +145,11 @@ public class LockVerifyServer {
   }
 
   public static void main(String[] args) throws Exception {
-    if (args.length != 2) {
-      System.out.println("Usage: java org.apache.lucene.store.LockVerifyServer bindToIp clients\n");
+    if (args.length != 3) {
+      System.out.println("Usage: java org.apache.lucene.store.LockVerifyServer bindToIp bindToPort numClients\n");
       System.exit(1);
     }
 
-    run(args[0], Integer.parseInt(args[1]), addr -> {});
+    run(args[0], Integer.parseInt(args[1]), Integer.parseInt(args[2]), addr -> {});
   }
 }

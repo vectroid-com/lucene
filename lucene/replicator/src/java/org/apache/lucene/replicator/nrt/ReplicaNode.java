@@ -376,7 +376,7 @@ public abstract class ReplicaNode extends Node {
       infos.setUserData(commitData, false);
 
       // write and fsync a new segments_N
-      infos.commit(dir);
+      infos.commit(dir, true);
 
       // Notify current infos (which may have changed while we were doing dir.sync above) what
       // generation we are up to; this way future

@@ -45,6 +45,9 @@ public class TestCodecHoldsOpenFiles extends LuceneTestCase {
     w.commit();
     w.close();
 
+    // VECTROID: read some document to make sure that lazily opened files are opened
+    r.storedFields().document(0);
+
     for (String name : d.listAll()) {
       d.deleteFile(name);
     }

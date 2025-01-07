@@ -105,7 +105,7 @@ public class Lucene102BinaryQuantizedVectorsFormat extends FlatVectorsFormat {
 
   /** The raw (unquantized) vector format used to read the original vectors. */
   protected static final FlatVectorsFormat rawVectorFormat =
-      new Lucene99FlatVectorsFormat(FlatVectorScorerUtil.getLucene99FlatVectorsScorer());
+      new Lucene99FlatVectorsFormat(FlatVectorScorerUtil.getLucene99FlatVectorsScorer(), false, true);
 
   private static final Lucene102BinaryFlatVectorsScorer scorer =
       new Lucene102BinaryFlatVectorsScorer(FlatVectorScorerUtil.getLucene99FlatVectorsScorer());

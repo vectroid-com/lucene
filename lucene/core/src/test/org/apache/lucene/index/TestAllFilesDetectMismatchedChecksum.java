@@ -91,7 +91,10 @@ public class TestAllFilesDetectMismatchedChecksum extends LuceneTestCase {
 
   private void checkMismatchedChecksum(Directory dir) throws IOException {
     for (String name : dir.listAll()) {
-      if (name.equals(IndexWriter.WRITE_LOCK_NAME) == false) {
+      if (name.equals(IndexWriter.WRITE_LOCK_NAME) == false
+          && !name.endsWith(".vex")
+          && !name.endsWith(".veq")
+          && !name.endsWith(".vec")) {
         corruptFile(dir, name);
       }
     }

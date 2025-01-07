@@ -300,7 +300,7 @@ public class TestPerFieldKnnVectorsFormat extends BaseKnnVectorsFormatTestCase {
         }
 
         @Override
-        public long ramBytesUsed() {
+        public long ramBytesUsedNonHard() {
           return writer.ramBytesUsed();
         }
       };

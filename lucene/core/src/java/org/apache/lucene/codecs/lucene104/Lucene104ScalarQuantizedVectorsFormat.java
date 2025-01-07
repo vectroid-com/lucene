@@ -102,8 +102,7 @@ public class Lucene104ScalarQuantizedVectorsFormat extends FlatVectorsFormat {
   static final String VECTOR_DATA_EXTENSION = "veq";
   static final int DIRECT_MONOTONIC_BLOCK_SHIFT = 16;
 
-  private static final FlatVectorsFormat rawVectorFormat =
-      new Lucene99FlatVectorsFormat(FlatVectorScorerUtil.getLucene99FlatVectorsScorer());
+  private final FlatVectorsFormat rawVectorFormat;
 
   private static final Lucene104ScalarQuantizedVectorScorer scorer =
       new Lucene104ScalarQuantizedVectorScorer(FlatVectorScorerUtil.getLucene99FlatVectorsScorer());
@@ -274,8 +273,13 @@ public class Lucene104ScalarQuantizedVectorsFormat extends FlatVectorsFormat {
 
   /** Creates a new instance with the chosen quantization encoding. */
   public Lucene104ScalarQuantizedVectorsFormat(ScalarEncoding encoding) {
+    this(encoding, true);
+  }
+
+  public Lucene104ScalarQuantizedVectorsFormat(ScalarEncoding encoding, boolean useTemporaryVectorFile) {
     super(NAME);
     this.encoding = encoding;
+    this.rawVectorFormat = new Lucene99FlatVectorsFormat(FlatVectorScorerUtil.getLucene99FlatVectorsScorer(), false, useTemporaryVectorFile);
   }
 
   @Override

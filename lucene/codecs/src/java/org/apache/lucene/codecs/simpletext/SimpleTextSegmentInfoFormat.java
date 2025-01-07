@@ -34,6 +34,7 @@ import org.apache.lucene.search.Sort;
 import org.apache.lucene.search.SortField;
 import org.apache.lucene.store.ByteArrayDataInput;
 import org.apache.lucene.store.ChecksumIndexInput;
+import org.apache.lucene.store.DataInput;
 import org.apache.lucene.store.DataOutput;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
@@ -76,10 +77,13 @@ public class SimpleTextSegmentInfoFormat extends SegmentInfoFormat {
   public SegmentInfo read(
       Directory directory, String segmentName, byte[] segmentID, IOContext context)
       throws IOException {
+    throw new UnsupportedOperationException();
+  }
+
+  public SegmentInfo parseSegmentInfo(
+      Directory directory, DataInput input, String segmentName, byte[] segmentID) throws IOException {
     BytesRefBuilder scratch = new BytesRefBuilder();
-    String segFileName =
-        IndexFileNames.segmentFileName(segmentName, "", SimpleTextSegmentInfoFormat.SI_EXTENSION);
-    try (ChecksumIndexInput input = directory.openChecksumInput(segFileName)) {
+    { // VECTROID: dummy code block to not have all the lines in it having a whitespace-only change
       SimpleTextUtil.readLine(input, scratch);
       assert StringHelper.startsWith(scratch.get(), SI_VERSION);
       final Version version;
@@ -205,8 +209,6 @@ public class SimpleTextSegmentInfoFormat extends SegmentInfoFormat {
         indexSort = new Sort(sortField);
       }
 
-      SimpleTextUtil.checkFooter(input);
-
       SegmentInfo info =
           new SegmentInfo(
               directory,
@@ -231,118 +233,110 @@ public class SimpleTextSegmentInfoFormat extends SegmentInfoFormat {
   }
 
   @Override
-  public void write(Directory dir, SegmentInfo si, IOContext ioContext) throws IOException {
+  public void writeSegmentInfo(DataOutput output, SegmentInfo si) throws IOException {
 
-    String segFileName =
-        IndexFileNames.segmentFileName(si.name, "", SimpleTextSegmentInfoFormat.SI_EXTENSION);
+    BytesRefBuilder scratch = new BytesRefBuilder();
 
-    try (IndexOutput output = dir.createOutput(segFileName, ioContext)) {
-      // Only add the file once we've successfully created it, else IFD assert can trip:
-      si.addFile(segFileName);
-      BytesRefBuilder scratch = new BytesRefBuilder();
+    SimpleTextUtil.write(output, SI_VERSION);
+    SimpleTextUtil.write(output, si.getVersion().toString(), scratch);
+    SimpleTextUtil.writeNewline(output);
 
-      SimpleTextUtil.write(output, SI_VERSION);
-      SimpleTextUtil.write(output, si.getVersion().toString(), scratch);
-      SimpleTextUtil.writeNewline(output);
+    SimpleTextUtil.write(output, SI_MIN_VERSION);
+    if (si.getMinVersion() == null) {
+      SimpleTextUtil.write(output, "null", scratch);
+    } else {
+      SimpleTextUtil.write(output, si.getMinVersion().toString(), scratch);
+    }
+    SimpleTextUtil.writeNewline(output);
 
-      SimpleTextUtil.write(output, SI_MIN_VERSION);
-      if (si.getMinVersion() == null) {
-        SimpleTextUtil.write(output, "null", scratch);
-      } else {
-        SimpleTextUtil.write(output, si.getMinVersion().toString(), scratch);
-      }
-      SimpleTextUtil.writeNewline(output);
+    SimpleTextUtil.write(output, SI_DOCCOUNT);
+    SimpleTextUtil.write(output, Integer.toString(si.maxDoc()), scratch);
+    SimpleTextUtil.writeNewline(output);
 
-      SimpleTextUtil.write(output, SI_DOCCOUNT);
-      SimpleTextUtil.write(output, Integer.toString(si.maxDoc()), scratch);
-      SimpleTextUtil.writeNewline(output);
+    SimpleTextUtil.write(output, SI_USECOMPOUND);
+    SimpleTextUtil.write(output, Boolean.toString(si.getUseCompoundFile()), scratch);
+    SimpleTextUtil.writeNewline(output);
 
-      SimpleTextUtil.write(output, SI_USECOMPOUND);
-      SimpleTextUtil.write(output, Boolean.toString(si.getUseCompoundFile()), scratch);
-      SimpleTextUtil.writeNewline(output);
+    SimpleTextUtil.write(output, SI_HAS_BLOCKS);
+    SimpleTextUtil.write(output, Boolean.toString(si.getHasBlocks()), scratch);
+    SimpleTextUtil.writeNewline(output);
 
-      SimpleTextUtil.write(output, SI_HAS_BLOCKS);
-      SimpleTextUtil.write(output, Boolean.toString(si.getHasBlocks()), scratch);
-      SimpleTextUtil.writeNewline(output);
+    Map<String, String> diagnostics = si.getDiagnostics();
+    int numDiagnostics = diagnostics == null ? 0 : diagnostics.size();
+    SimpleTextUtil.write(output, SI_NUM_DIAG);
+    SimpleTextUtil.write(output, Integer.toString(numDiagnostics), scratch);
+    SimpleTextUtil.writeNewline(output);
 
-      Map<String, String> diagnostics = si.getDiagnostics();
-      int numDiagnostics = diagnostics == null ? 0 : diagnostics.size();
-      SimpleTextUtil.write(output, SI_NUM_DIAG);
-      SimpleTextUtil.write(output, Integer.toString(numDiagnostics), scratch);
-      SimpleTextUtil.writeNewline(output);
-
-      if (numDiagnostics > 0) {
-        for (Map.Entry<String, String> diagEntry : diagnostics.entrySet()) {
-          SimpleTextUtil.write(output, SI_DIAG_KEY);
-          SimpleTextUtil.write(output, diagEntry.getKey(), scratch);
-          SimpleTextUtil.writeNewline(output);
-
-          SimpleTextUtil.write(output, SI_DIAG_VALUE);
-          SimpleTextUtil.write(output, diagEntry.getValue(), scratch);
-          SimpleTextUtil.writeNewline(output);
-        }
-      }
-
-      Map<String, String> attributes = si.getAttributes();
-      SimpleTextUtil.write(output, SI_NUM_ATT);
-      SimpleTextUtil.write(output, Integer.toString(attributes.size()), scratch);
-      SimpleTextUtil.writeNewline(output);
-
-      for (Map.Entry<String, String> attEntry : attributes.entrySet()) {
-        SimpleTextUtil.write(output, SI_ATT_KEY);
-        SimpleTextUtil.write(output, attEntry.getKey(), scratch);
+    if (numDiagnostics > 0) {
+      for (Map.Entry<String, String> diagEntry : diagnostics.entrySet()) {
+        SimpleTextUtil.write(output, SI_DIAG_KEY);
+        SimpleTextUtil.write(output, diagEntry.getKey(), scratch);
         SimpleTextUtil.writeNewline(output);
 
-        SimpleTextUtil.write(output, SI_ATT_VALUE);
-        SimpleTextUtil.write(output, attEntry.getValue(), scratch);
+        SimpleTextUtil.write(output, SI_DIAG_VALUE);
+        SimpleTextUtil.write(output, diagEntry.getValue(), scratch);
         SimpleTextUtil.writeNewline(output);
       }
+    }
 
-      Set<String> files = si.files();
-      int numFiles = files == null ? 0 : files.size();
-      SimpleTextUtil.write(output, SI_NUM_FILES);
-      SimpleTextUtil.write(output, Integer.toString(numFiles), scratch);
+    Map<String, String> attributes = si.getAttributes();
+    SimpleTextUtil.write(output, SI_NUM_ATT);
+    SimpleTextUtil.write(output, Integer.toString(attributes.size()), scratch);
+    SimpleTextUtil.writeNewline(output);
+
+    for (Map.Entry<String, String> attEntry : attributes.entrySet()) {
+      SimpleTextUtil.write(output, SI_ATT_KEY);
+      SimpleTextUtil.write(output, attEntry.getKey(), scratch);
       SimpleTextUtil.writeNewline(output);
 
-      if (numFiles > 0) {
-        for (String fileName : files) {
-          SimpleTextUtil.write(output, SI_FILE);
-          SimpleTextUtil.write(output, fileName, scratch);
-          SimpleTextUtil.writeNewline(output);
-        }
-      }
-
-      SimpleTextUtil.write(output, SI_ID);
-      SimpleTextUtil.write(output, new BytesRef(si.getId()).toString(), scratch);
+      SimpleTextUtil.write(output, SI_ATT_VALUE);
+      SimpleTextUtil.write(output, attEntry.getValue(), scratch);
       SimpleTextUtil.writeNewline(output);
+    }
 
-      Sort indexSort = si.getIndexSort();
-      SimpleTextUtil.write(output, SI_SORT);
-      final int numSortFields = indexSort == null ? 0 : indexSort.getSort().length;
-      SimpleTextUtil.write(output, Integer.toString(numSortFields), scratch);
-      SimpleTextUtil.writeNewline(output);
-      for (int i = 0; i < numSortFields; ++i) {
-        final SortField sortField = indexSort.getSort()[i];
-        IndexSorter sorter = sortField.getIndexSorter();
-        if (sorter == null) {
-          throw new IllegalStateException("Cannot serialize sort " + sortField);
-        }
+    Set<String> files = si.files();
+    int numFiles = files == null ? 0 : files.size();
+    SimpleTextUtil.write(output, SI_NUM_FILES);
+    SimpleTextUtil.write(output, Integer.toString(numFiles), scratch);
+    SimpleTextUtil.writeNewline(output);
 
-        SimpleTextUtil.write(output, SI_SORT_NAME);
-        SimpleTextUtil.write(output, sorter.getProviderName(), scratch);
-        SimpleTextUtil.writeNewline(output);
-
-        SimpleTextUtil.write(output, SI_SORT_TYPE);
-        SimpleTextUtil.write(output, sortField.toString(), scratch);
-        SimpleTextUtil.writeNewline(output);
-
-        SimpleTextUtil.write(output, SI_SORT_BYTES);
-        BytesRefOutput b = new BytesRefOutput();
-        SortFieldProvider.write(sortField, b);
-        SimpleTextUtil.write(output, b.bytes.get().toString(), scratch);
+    if (numFiles > 0) {
+      for (String fileName : files) {
+        SimpleTextUtil.write(output, SI_FILE);
+        SimpleTextUtil.write(output, fileName, scratch);
         SimpleTextUtil.writeNewline(output);
       }
-      SimpleTextUtil.writeChecksum(output, scratch);
+    }
+
+    SimpleTextUtil.write(output, SI_ID);
+    SimpleTextUtil.write(output, new BytesRef(si.getId()).toString(), scratch);
+    SimpleTextUtil.writeNewline(output);
+
+    Sort indexSort = si.getIndexSort();
+    SimpleTextUtil.write(output, SI_SORT);
+    final int numSortFields = indexSort == null ? 0 : indexSort.getSort().length;
+    SimpleTextUtil.write(output, Integer.toString(numSortFields), scratch);
+    SimpleTextUtil.writeNewline(output);
+    for (int i = 0; i < numSortFields; ++i) {
+      final SortField sortField = indexSort.getSort()[i];
+      IndexSorter sorter = sortField.getIndexSorter();
+      if (sorter == null) {
+        throw new IllegalStateException("Cannot serialize sort " + sortField);
+      }
+
+      SimpleTextUtil.write(output, SI_SORT_NAME);
+      SimpleTextUtil.write(output, sorter.getProviderName(), scratch);
+      SimpleTextUtil.writeNewline(output);
+
+      SimpleTextUtil.write(output, SI_SORT_TYPE);
+      SimpleTextUtil.write(output, sortField.toString(), scratch);
+      SimpleTextUtil.writeNewline(output);
+
+      SimpleTextUtil.write(output, SI_SORT_BYTES);
+      BytesRefOutput b = new BytesRefOutput();
+      SortFieldProvider.write(sortField, b);
+      SimpleTextUtil.write(output, b.bytes.get().toString(), scratch);
+      SimpleTextUtil.writeNewline(output);
     }
   }
 

@@ -47,8 +47,10 @@ import org.apache.lucene.store.FileDataHint;
 import org.apache.lucene.store.FileTypeHint;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
+import org.apache.lucene.store.PreloadHint;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.IOUtils;
+import org.apache.lucene.util.LazyResource;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.apache.lucene.util.hnsw.RandomVectorScorer;
 import org.apache.lucene.util.quantization.OptimizedScalarQuantizer;
@@ -63,7 +65,7 @@ public class Lucene104ScalarQuantizedVectorsReader extends FlatVectorsReader
       RamUsageEstimator.shallowSizeOfInstance(Lucene104ScalarQuantizedVectorsReader.class);
 
   private final Map<String, FieldEntry> fields = new HashMap<>();
-  private final IndexInput quantizedVectorData;
+  private final LazyResource<IndexInput> quantizedVectorData;
   private final FlatVectorsReader rawVectorsReader;
   private final Lucene104ScalarQuantizedVectorScorer vectorScorer;
   public static final int EXHAUSTIVE_BULK_SCORE_ORDS = 64;
@@ -100,16 +102,17 @@ public class Lucene104ScalarQuantizedVectorsReader extends FlatVectorsReader
       } finally {
         CodecUtil.checkFooter(meta, priorE);
       }
-      quantizedVectorData =
+      int finalVersionMeta = versionMeta;
+      quantizedVectorData = new LazyResource<>(() ->
           openDataInput(
               state,
-              versionMeta,
+              finalVersionMeta,
               VECTOR_DATA_EXTENSION,
               Lucene104ScalarQuantizedVectorsFormat.VECTOR_DATA_CODEC_NAME,
               // Quantized vectors are accessed randomly from their node ID stored in the HNSW
               // graph.
               state.context.withHints(
-                  FileTypeHint.DATA, FileDataHint.KNN_VECTORS, DataAccessHint.RANDOM));
+                  FileTypeHint.DATA, FileDataHint.KNN_VECTORS, DataAccessHint.RANDOM, PreloadHint.INSTANCE)));
     } catch (Throwable t) {
       IOUtils.closeWhileHandlingException(this);
       throw t;
@@ -180,7 +183,7 @@ public class Lucene104ScalarQuantizedVectorsReader extends FlatVectorsReader
             fi.centroidDP,
             fi.vectorDataOffset,
             fi.vectorDataLength,
-            quantizedVectorData),
+            quantizedVectorData.get()),
         target);
   }
 
@@ -191,8 +194,9 @@ public class Lucene104ScalarQuantizedVectorsReader extends FlatVectorsReader
 
   @Override
   public void checkIntegrity() throws IOException {
-    rawVectorsReader.checkIntegrity();
-    CodecUtil.checksumEntireFile(quantizedVectorData);
+    // VECTROID: ignore checksum verification. This causes that the input file is read twice.
+//    rawVectorsReader.checkIntegrity();
+//    CodecUtil.checksumEntireFile(quantizedVectorData);
   }
 
   @Override
@@ -224,7 +228,7 @@ public class Lucene104ScalarQuantizedVectorsReader extends FlatVectorsReader
           fi.centroid,
           fi.vectorDataOffset,
           fi.vectorDataLength,
-          quantizedVectorData);
+          quantizedVectorData.get());
     }
 
     OffHeapScalarQuantizedVectorValues sqvv =
@@ -240,7 +244,7 @@ public class Lucene104ScalarQuantizedVectorsReader extends FlatVectorsReader
             fi.centroidDP,
             fi.vectorDataOffset,
             fi.vectorDataLength,
-            quantizedVectorData);
+            quantizedVectorData.get());
     return new ScalarQuantizedVectorValues(rawFloatVectorValues, sqvv);
   }
 
@@ -361,7 +365,7 @@ public class Lucene104ScalarQuantizedVectorsReader extends FlatVectorsReader
                 + versionVectorData,
             in);
       }
-      CodecUtil.retrieveChecksum(in);
+//      CodecUtil.retrieveChecksum(in);
       return in;
     } catch (Throwable t) {
       IOUtils.closeWhileHandlingException(in);
@@ -413,7 +417,7 @@ public class Lucene104ScalarQuantizedVectorsReader extends FlatVectorsReader
             fi.centroidDP,
             fi.vectorDataOffset,
             fi.vectorDataLength,
-            quantizedVectorData);
+            quantizedVectorData.get());
     return new org.apache.lucene.util.quantization.QuantizedByteVectorValues() {
       @Override
       public float getScoreCorrectionConstant(int ord) throws IOException {

@@ -21,6 +21,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.net.URI;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Random;
@@ -63,7 +64,7 @@ public class LockStressTest {
     final String verifierHost = args[arg++];
     final int verifierPort = Integer.parseInt(args[arg++]);
     final String lockFactoryClassName = args[arg++];
-    final Path lockDirPath = Paths.get(args[arg++]);
+    final String lockDirPath = args[arg++];
     final int sleepTimeMS = Integer.parseInt(args[arg++]);
     final int count = Integer.parseInt(args[arg++]);
 
@@ -73,7 +74,7 @@ public class LockStressTest {
             verifierHost,
             verifierPort,
             lockFactoryClassName,
-            lockDirPath,
+            lockDirPath.matches("[a-z0-9]://.*") ? Paths.get(URI.create(lockDirPath)) : Paths.get(lockDirPath),
             sleepTimeMS,
             count);
     System.exit(exitCode);
@@ -123,13 +124,15 @@ public class LockStressTest {
             if (rnd.nextBoolean()) {
               verifyLF = new VerifyingLockFactory(getNewLockFactory(lockFactoryClassName), in, out);
             }
-            try (final Lock secondLock = verifyLF.obtainLock(lockDir, LOCK_FILE_NAME)) {
-              throw new IOException("Double obtain");
-            } catch (
-                @SuppressWarnings("unused")
-                LockObtainFailedException loe) {
-              // pass
-            }
+            // When testing our OFS-based lock, we can't do this because the 2nd lock blocks
+            // until the lock is free, or until it times out.
+//            try (final Lock secondLock = verifyLF.obtainLock(lockDir, LOCK_FILE_NAME)) {
+//              throw new IOException("Double obtain");
+//            } catch (
+//                @SuppressWarnings("unused")
+//                LockObtainFailedException loe) {
+//              // pass
+//            }
           }
           Thread.sleep(sleepTimeMS);
         } catch (
@@ -138,7 +141,7 @@ public class LockStressTest {
           // obtain failed
         }
 
-        if (i % 500 == 0) {
+        if (i % Math.max(1, count/100) == 0) {
           System.out.println((i * 100. / count) + "% done.");
         }
 

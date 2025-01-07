@@ -186,7 +186,7 @@ public abstract class BufferingKnnVectorsWriter extends KnnVectorsWriter {
   }
 
   @Override
-  public long ramBytesUsed() {
+  public long ramBytesUsedNonHard() {
     long total = 0;
     for (FieldWriter<?> field : fields) {
       total += field.ramBytesUsed();

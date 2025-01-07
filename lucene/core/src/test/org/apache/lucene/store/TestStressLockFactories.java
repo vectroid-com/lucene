@@ -71,6 +71,7 @@ public class TestStressLockFactories extends LuceneTestCase {
     try {
       LockVerifyServer.run(
           host,
+          0,
           clients,
           addr -> {
             // spawn clients as separate Java processes

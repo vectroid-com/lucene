@@ -18,6 +18,8 @@ package org.apache.lucene.codecs;
 
 import java.io.IOException;
 import org.apache.lucene.index.SegmentInfo;
+import org.apache.lucene.store.DataInput;
+import org.apache.lucene.store.DataOutput;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
 
@@ -44,12 +46,20 @@ public abstract class SegmentInfoFormat {
       Directory directory, String segmentName, byte[] segmentID, IOContext context)
       throws IOException;
 
-  /**
-   * Write {@link SegmentInfo} data. The codec must add its SegmentInfo filename(s) to {@code info}
-   * before doing i/o.
-   *
-   * @throws IOException If an I/O error occurs
-   */
-  public abstract void write(Directory dir, SegmentInfo info, IOContext ioContext)
-      throws IOException;
+  // VECTROID: this method reads the .si file from an existing DataInput
+  public abstract SegmentInfo parseSegmentInfo(
+      Directory dir, DataInput input, String segment, byte[] segmentID) throws IOException;
+
+  // VECTROID: this method writes the .si file into a separate file. We don't use it.
+//  /**
+//   * Write {@link SegmentInfo} data. The codec must add its SegmentInfo filename(s) to {@code info}
+//   * before doing i/o.
+//   *
+//   * @throws IOException If an I/O error occurs
+//   */
+//  public abstract void write(Directory dir, SegmentInfo info, IOContext ioContext)
+//      throws IOException;
+
+  // VECTROID: this method writes the .si file into an existing DataOutput
+  public abstract void writeSegmentInfo(DataOutput output, SegmentInfo si) throws IOException;
 }

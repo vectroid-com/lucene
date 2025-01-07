@@ -271,6 +271,7 @@ public final class Lucene95HnswVectorsReader extends KnnVectorsReader implements
   public FloatVectorValues getFloatVectorValues(String field) throws IOException {
     final FieldEntry fieldEntry = getFieldEntry(field, VectorEncoding.FLOAT32);
     return OffHeapFloatVectorValues.load(
+        "?",
         fieldEntry.similarityFunction,
         defaultFlatVectorScorer,
         fieldEntry.ordToDocVectorValues,
@@ -285,6 +286,7 @@ public final class Lucene95HnswVectorsReader extends KnnVectorsReader implements
   public ByteVectorValues getByteVectorValues(String field) throws IOException {
     final FieldEntry fieldEntry = getFieldEntry(field, VectorEncoding.BYTE);
     return OffHeapByteVectorValues.load(
+        "?",
         fieldEntry.similarityFunction,
         defaultFlatVectorScorer,
         fieldEntry.ordToDocVectorValues,
@@ -305,6 +307,7 @@ public final class Lucene95HnswVectorsReader extends KnnVectorsReader implements
 
     OffHeapFloatVectorValues vectorValues =
         OffHeapFloatVectorValues.load(
+            "?",
             fieldEntry.similarityFunction,
             defaultFlatVectorScorer,
             fieldEntry.ordToDocVectorValues,
@@ -333,6 +336,7 @@ public final class Lucene95HnswVectorsReader extends KnnVectorsReader implements
 
     OffHeapByteVectorValues vectorValues =
         OffHeapByteVectorValues.load(
+            "?",
             fieldEntry.similarityFunction,
             defaultFlatVectorScorer,
             fieldEntry.ordToDocVectorValues,

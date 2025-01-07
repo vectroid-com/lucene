@@ -47,6 +47,7 @@ import org.apache.lucene.store.FileDataHint;
 import org.apache.lucene.store.FileTypeHint;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
+import org.apache.lucene.store.PreloadHint;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.RamUsageEstimator;
@@ -114,7 +115,7 @@ public class Lucene102BinaryQuantizedVectorsReader extends FlatVectorsReader {
               // Quantized vectors are accessed randomly from their node ID stored in the HNSW
               // graph.
               state.context.withHints(
-                  FileTypeHint.DATA, FileDataHint.KNN_VECTORS, DataAccessHint.RANDOM));
+                  FileTypeHint.DATA, FileDataHint.KNN_VECTORS, DataAccessHint.RANDOM, PreloadHint.INSTANCE));
       success = true;
     } finally {
       if (success == false) {
@@ -195,7 +196,8 @@ public class Lucene102BinaryQuantizedVectorsReader extends FlatVectorsReader {
   @Override
   public void checkIntegrity() throws IOException {
     rawVectorsReader.checkIntegrity();
-    CodecUtil.checksumEntireFile(quantizedVectorData);
+    // VECTROID: ignore checksum verification. This causes that the input file is read twice.
+//    CodecUtil.checksumEntireFile(quantizedVectorData);
   }
 
   @Override
@@ -323,7 +325,8 @@ public class Lucene102BinaryQuantizedVectorsReader extends FlatVectorsReader {
                 + versionVectorData,
             in);
       }
-      CodecUtil.retrieveChecksum(in);
+      // VECTROID: ignore checksum verification. This causes that the input file is read twice.
+//      CodecUtil.retrieveChecksum(in);
       success = true;
       return in;
     } finally {

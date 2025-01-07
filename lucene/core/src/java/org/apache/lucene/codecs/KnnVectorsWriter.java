@@ -229,6 +229,16 @@ public abstract class KnnVectorsWriter implements Accountable, Closeable {
     }
   }
 
+  @Override
+  public final long ramBytesUsed() {
+    if (Accountable.forHard.get() == Boolean.TRUE) {
+      return 0;
+    }
+    return ramBytesUsedNonHard();
+  }
+
+  protected abstract long ramBytesUsedNonHard();
+
   /** View over multiple vector values supporting iterator-style access via DocIdMerger. */
   public static final class MergedVectorValues {
     private MergedVectorValues() {}

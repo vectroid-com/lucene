@@ -69,7 +69,7 @@ public class TestLucene104HnswScalarQuantizedVectorsFormat extends BaseKnnVector
             Lucene99HnswVectorsFormat.DEFAULT_MAX_CONN,
             Lucene99HnswVectorsFormat.DEFAULT_BEAM_WIDTH,
             1,
-            null);
+            null, true);
     super.setUp();
   }
 
@@ -84,7 +84,7 @@ public class TestLucene104HnswScalarQuantizedVectorsFormat extends BaseKnnVector
           @Override
           public KnnVectorsFormat knnVectorsFormat() {
             return new Lucene104HnswScalarQuantizedVectorsFormat(
-                ScalarEncoding.UNSIGNED_BYTE, 10, 20, 1, null);
+                ScalarEncoding.UNSIGNED_BYTE, 10, 20, 1, null, true);
           }
         };
     String expectedPattern =
@@ -171,7 +171,7 @@ public class TestLucene104HnswScalarQuantizedVectorsFormat extends BaseKnnVector
         IllegalArgumentException.class,
         () ->
             new Lucene104HnswScalarQuantizedVectorsFormat(
-                ScalarEncoding.UNSIGNED_BYTE, 20, 100, 1, new SameThreadExecutorService()));
+                ScalarEncoding.UNSIGNED_BYTE, 20, 100, 1, new SameThreadExecutorService(), true));
   }
 
   // Ensures that all expected vector similarity functions are translatable in the format.

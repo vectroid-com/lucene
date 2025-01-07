@@ -20,6 +20,8 @@ import java.io.IOException;
 import java.util.Random;
 import org.apache.lucene.codecs.SegmentInfoFormat;
 import org.apache.lucene.index.SegmentInfo;
+import org.apache.lucene.store.DataInput;
+import org.apache.lucene.store.DataOutput;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
 
@@ -40,10 +42,16 @@ class CrankySegmentInfoFormat extends SegmentInfoFormat {
   }
 
   @Override
-  public void write(Directory dir, SegmentInfo info, IOContext ioContext) throws IOException {
+  public SegmentInfo parseSegmentInfo(Directory dir, DataInput input, String segment,
+      byte[] segmentID) throws IOException {
+    return delegate.parseSegmentInfo(dir, input, segment, segmentID);
+  }
+
+  @Override
+  public void writeSegmentInfo(DataOutput output, SegmentInfo si) throws IOException {
     if (random.nextInt(100) == 0) {
       throw new IOException("Fake IOException from SegmentInfoFormat.write()");
     }
-    delegate.write(dir, info, ioContext);
+    delegate.writeSegmentInfo(output, si);
   }
 }

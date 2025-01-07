@@ -86,7 +86,8 @@ public class Lucene104HnswScalarQuantizedVectorsFormat extends KnnVectorsFormat 
         DEFAULT_BEAM_WIDTH,
         DEFAULT_NUM_MERGE_WORKER,
         null,
-        HNSW_GRAPH_THRESHOLD);
+        HNSW_GRAPH_THRESHOLD,
+        true);
   }
 
   /**
@@ -102,7 +103,8 @@ public class Lucene104HnswScalarQuantizedVectorsFormat extends KnnVectorsFormat 
         beamWidth,
         DEFAULT_NUM_MERGE_WORKER,
         null,
-        HNSW_GRAPH_THRESHOLD);
+        HNSW_GRAPH_THRESHOLD,
+        true);
   }
 
   /**
@@ -113,8 +115,9 @@ public class Lucene104HnswScalarQuantizedVectorsFormat extends KnnVectorsFormat 
    * @param beamWidth the size of the queue maintained during graph construction.
    */
   public Lucene104HnswScalarQuantizedVectorsFormat(
-      ScalarEncoding encoding, int maxConn, int beamWidth) {
-    this(encoding, maxConn, beamWidth, DEFAULT_NUM_MERGE_WORKER, null, HNSW_GRAPH_THRESHOLD);
+      ScalarEncoding encoding, int maxConn, int beamWidth,
+      boolean useTemporaryVectorFile) {
+    this(encoding, maxConn, beamWidth, DEFAULT_NUM_MERGE_WORKER, null, HNSW_GRAPH_THRESHOLD, useTemporaryVectorFile);
   }
 
   /**
@@ -133,8 +136,9 @@ public class Lucene104HnswScalarQuantizedVectorsFormat extends KnnVectorsFormat 
       int maxConn,
       int beamWidth,
       int numMergeWorkers,
-      ExecutorService mergeExec) {
-    this(encoding, maxConn, beamWidth, numMergeWorkers, mergeExec, HNSW_GRAPH_THRESHOLD);
+      ExecutorService mergeExec,
+      boolean useTemporaryVectorFile) {
+    this(encoding, maxConn, beamWidth, numMergeWorkers, mergeExec, HNSW_GRAPH_THRESHOLD, useTemporaryVectorFile);
   }
 
   /**
@@ -153,9 +157,10 @@ public class Lucene104HnswScalarQuantizedVectorsFormat extends KnnVectorsFormat 
       int beamWidth,
       int numMergeWorkers,
       ExecutorService mergeExec,
-      int tinySegmentsThreshold) {
+      int tinySegmentsThreshold,
+      boolean useTemporaryVectorFile) {
     super(NAME);
-    flatVectorsFormat = new Lucene104ScalarQuantizedVectorsFormat(encoding);
+    flatVectorsFormat = new Lucene104ScalarQuantizedVectorsFormat(encoding, useTemporaryVectorFile);
     if (maxConn <= 0 || maxConn > MAXIMUM_MAX_CONN) {
       throw new IllegalArgumentException(
           "maxConn must be positive and less than or equal to "
